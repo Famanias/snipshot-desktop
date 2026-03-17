@@ -8,8 +8,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # API Endpoints
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8002/api")
-TRANSLATOR_URL = os.getenv("TRANSLATOR_URL", "http://localhost:8000")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
+TRANSLATOR_URL = os.getenv("TRANSLATOR_URL", "http://localhost:8001")
+
+# Translation settings (must match snipshot-backend config enums)
+TRANSLATION_TARGET_LANG = os.getenv("TRANSLATION_TARGET_LANG", "ENG").upper()
+TRANSLATION_INPAINTER = os.getenv("TRANSLATION_INPAINTER", "lama_large").lower()
+if TRANSLATION_INPAINTER not in {"lama_large", "none"}:
+    TRANSLATION_INPAINTER = "lama_large"
 
 # App Settings
 APP_NAME = "SnipShot"
@@ -24,8 +30,8 @@ DEFAULT_TRANSLATION_CONFIG = {
         "unclip_ratio": 2.3
     },
     "render": {"direction": "auto"},
-    "translator": {"translator": "groq", "target_lang": "ENG"},
-    "inpainter": {"inpainter": "default", "inpainting_size": 2048},
+    "translator": {"translator": "groq", "target_lang": TRANSLATION_TARGET_LANG},
+    "inpainter": {"inpainter": TRANSLATION_INPAINTER, "inpainting_size": 2048},
     "mask_dilation_offset": 30
 }
 

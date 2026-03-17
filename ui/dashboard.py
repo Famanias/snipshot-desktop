@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QFrame, QScrollArea, QGridLayout, QMenu, QAction,
     QInputDialog, QMessageBox, QSizePolicy, QListWidget,
     QListWidgetItem, QStackedWidget, QProgressBar, QDialog,
-    QLineEdit, QTextEdit, QDialogButtonBox, QApplication
+    QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread
 from PyQt5.QtGui import QIcon, QPixmap, QCursor, QFont
@@ -17,6 +17,7 @@ from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkRepl
 from PyQt5.QtCore import QUrl
 
 from api import api_client
+from config import TRANSLATION_TARGET_LANG
 from utils import format_file_size, format_date
 
 
@@ -369,7 +370,8 @@ class FolderCard(QFrame):
         layout.addWidget(name_label)
         
         # Image count
-        count_label = QLabel(f"{self.image_count} images")
+        image_label = "image" if self.image_count == 1 else "images"
+        count_label = QLabel(f"{self.image_count} {image_label}")
         count_label.setStyleSheet("color: #5F6368; font-size: 12px;")
         count_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(count_label)
@@ -500,6 +502,21 @@ class DashboardWindow(QWidget):
         
         self.current_folder_id = None
         self.current_folder_name = None
+        self.active_nav = "all"
+        self.target_language = TRANSLATION_TARGET_LANG
+        self.language_options = [
+            ("English", "ENG"),
+            ("Japanese", "JPN"),
+            ("Korean", "KOR"),
+            ("Chinese (Simplified)", "CHS"),
+            ("Chinese (Traditional)", "CHT"),
+            # ("Spanish", "ESP"),
+            # ("French", "FRA"),
+            # ("German", "DEU"),
+            # ("Italian", "ITA"),
+            # ("Portuguese", "POR"),
+            # ("Russian", "RUS"),
+        ]
         
         self._setup_ui()
         
@@ -568,6 +585,12 @@ class DashboardWindow(QWidget):
         self.nav_recent.setStyleSheet(self._nav_button_style(False))
         self.nav_recent.clicked.connect(self._on_nav_recent)
         sidebar_layout.addWidget(self.nav_recent)
+
+        self.nav_settings = QPushButton("⚙️  Settings")
+        self.nav_settings.setCursor(Qt.PointingHandCursor)
+        self.nav_settings.setStyleSheet(self._nav_button_style(False))
+        self.nav_settings.clicked.connect(self._on_nav_settings)
+        sidebar_layout.addWidget(self.nav_settings)
         
         sidebar_layout.addStretch()
         
@@ -720,6 +743,13 @@ class DashboardWindow(QWidget):
                     text-align: left;
                 }
             """
+
+    def _set_active_nav(self, active: str):
+        """Update sidebar active state styling."""
+        self.active_nav = active
+        self.nav_all.setStyleSheet(self._nav_button_style(active == "all"))
+        self.nav_recent.setStyleSheet(self._nav_button_style(active == "recent"))
+        self.nav_settings.setStyleSheet(self._nav_button_style(active == "settings"))
     
     def load_user_info(self):
         """Load and display user info"""
@@ -729,6 +759,14 @@ class DashboardWindow(QWidget):
     
     def refresh(self):
         """Refresh current view"""
+        if self.active_nav == "settings":
+            self._on_nav_settings()
+            return
+
+        if self.active_nav == "recent":
+            self._on_nav_recent()
+            return
+
         if self.current_folder_id:
             self._load_folder(self.current_folder_id, self.current_folder_name)
         else:
@@ -743,6 +781,12 @@ class DashboardWindow(QWidget):
     
     def _load_all_files_async(self):
         """Load folders and unfiled images asynchronously"""
+        self.current_folder_id = None
+        self.current_folder_name = None
+        self.header_title.setText("My Files")
+        self.new_folder_btn.setVisible(True)
+        self._set_active_nav("all")
+
         from PyQt5.QtCore import QThread, pyqtSignal
 
         class LoadWorker(QThread):
@@ -822,6 +866,7 @@ class DashboardWindow(QWidget):
         """Load images in a specific folder"""
         self.current_folder_id = folder_id
         self.current_folder_name = folder_name
+        self._set_active_nav("all")
         
         # Update header with back button
         self.header_title.setText(f"📁 {folder_name}")
@@ -848,8 +893,8 @@ class DashboardWindow(QWidget):
         back_btn.clicked.connect(self._on_nav_all)
         self.content_layout.addWidget(back_btn)
         
-        # Load folder contents
-        result = api_client.get_folder(folder_id)
+        # Load folder contents via images endpoint filtered by folder_id
+        result = api_client.get_images(folder_id=folder_id, page=1, per_page=100)
         
         if result["success"]:
             images = result["data"].get("images", [])
@@ -981,15 +1026,13 @@ class DashboardWindow(QWidget):
     
     def _on_nav_recent(self):
         """Navigate to recent files"""
+        self._set_active_nav("recent")
         self.current_folder_id = None
+        self.current_folder_name = None
         self.header_title.setText("Recent")
         self.new_folder_btn.setVisible(False)
         
         self._clear_content()
-        
-        # Update nav styling
-        self.nav_all.setStyleSheet(self._nav_button_style(False))
-        self.nav_recent.setStyleSheet(self._nav_button_style(True))
         
         # Load all images sorted by date
         result = api_client.get_images()
@@ -1004,6 +1047,86 @@ class DashboardWindow(QWidget):
             self._show_error("Failed to load recent files")
         
         self.content_layout.addStretch()
+
+    def _on_nav_settings(self):
+        """Navigate to settings view."""
+        self._set_active_nav("settings")
+        self.current_folder_id = None
+        self.current_folder_name = None
+        self.header_title.setText("Settings")
+        self.new_folder_btn.setVisible(False)
+
+        self._clear_content()
+        self._render_settings_content()
+        self.content_layout.addStretch()
+
+    def _render_settings_content(self):
+        """Render settings controls in content area."""
+        settings_card = QFrame()
+        settings_card.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border: 1px solid #DADCE0;
+                border-radius: 8px;
+            }
+        """)
+
+        settings_layout = QVBoxLayout(settings_card)
+        settings_layout.setContentsMargins(20, 20, 20, 20)
+        settings_layout.setSpacing(12)
+
+        title = QLabel("Translation Settings")
+        title.setStyleSheet("font-size: 18px; font-weight: 600; color: #202124;")
+        settings_layout.addWidget(title)
+
+        subtitle = QLabel("Select the default target language used for each new snip.")
+        subtitle.setStyleSheet("color: #5F6368; font-size: 13px;")
+        settings_layout.addWidget(subtitle)
+
+        lang_label = QLabel("Target Language")
+        lang_label.setStyleSheet("font-weight: 500; color: #202124; margin-top: 8px;")
+        settings_layout.addWidget(lang_label)
+
+        self.language_combo = QComboBox()
+        self.language_combo.setStyleSheet("""
+            QComboBox {
+                padding: 10px;
+                border: 1px solid #DADCE0;
+                border-radius: 4px;
+                font-size: 14px;
+                min-width: 280px;
+            }
+        """)
+        for label, code in self.language_options:
+            self.language_combo.addItem(f"{label} ({code})", code)
+
+        current_index = self.language_combo.findData(self.target_language)
+        if current_index >= 0:
+            self.language_combo.setCurrentIndex(current_index)
+
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        settings_layout.addWidget(self.language_combo)
+
+        self.language_hint_label = QLabel(f"Current target language: {self.target_language}")
+        self.language_hint_label.setStyleSheet("color: #5F6368; font-size: 12px;")
+        settings_layout.addWidget(self.language_hint_label)
+
+        self.content_layout.addWidget(settings_card)
+
+    def _on_language_changed(self):
+        """Handle settings language selection change."""
+        if not hasattr(self, "language_combo"):
+            return
+
+        selected = self.language_combo.currentData()
+        if selected:
+            self.target_language = selected
+            if hasattr(self, "language_hint_label"):
+                self.language_hint_label.setText(f"Current target language: {self.target_language}")
+
+    def get_target_language(self) -> str:
+        """Return currently selected target language for new translations."""
+        return self.target_language
     
     def _on_folder_clicked(self, folder_id: int, folder_name: str):
         """Handle folder click"""

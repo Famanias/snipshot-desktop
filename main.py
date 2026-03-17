@@ -145,7 +145,11 @@ class MainWindow(QMainWindow):
             return
         
         # Open translation dialog
-        self.translation_window = TranslationWindow(pixmap, self)
+        self.translation_window = TranslationWindow(
+            pixmap,
+            self,
+            target_language=self.dashboard.get_target_language()
+        )
         self.translation_window.saved.connect(self.dashboard.refresh)
         self.translation_window.exec_()
     

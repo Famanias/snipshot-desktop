@@ -107,7 +107,7 @@ class APIClient:
             if response.status_code == 200:
                 return {"success": True, "data": response.json()}
             else:
-                return {"success": False, "error": "Failed to get folders"}
+                return {"success": False, "error": f"Failed to get folders: {response.status_code} - {response.text}"}
     
     def create_folder(self, name: str, description: str = "") -> Dict[str, Any]:
         """Create a new folder"""
@@ -167,8 +167,9 @@ class APIClient:
                 params={"delete_images": delete_images}
             )
             
-            if response.status_code == 204:
-                return {"success": True}
+            if response.status_code in (200, 204):
+                data = response.json() if response.content else {}
+                return {"success": True, "data": data}
             else:
                 return {"success": False, "error": "Failed to delete folder"}
     
@@ -190,7 +191,7 @@ class APIClient:
             if response.status_code == 200:
                 return {"success": True, "data": response.json()}
             else:
-                return {"success": False, "error": "Failed to get images"}
+                 return {"success": False, "error": f"Failed to get images: {response.status_code} - {response.text}"}
     
     def get_image(self, image_id: int) -> Dict[str, Any]:
         """Get single image details"""
@@ -216,9 +217,9 @@ class APIClient:
         """Save translated image from URL to user's account"""
         data = {
             "image_url": image_url,
-            "filename": filename
+            "original_filename": filename
         }
-        if folder_id:
+        if folder_id is not None:
             data["folder_id"] = str(folder_id)
         if source_language:
             data["source_language"] = source_language
@@ -247,7 +248,7 @@ class APIClient:
         """Update image (rename or move)"""
         data = {}
         if filename:
-            data["filename"] = filename
+            data["original_filename"] = filename
         if folder_id is not None:
             data["folder_id"] = folder_id
             
@@ -293,18 +294,39 @@ class APIClient:
             data = {
                 "config": json.dumps(config)
             }
-            
-            response = client.post(
-                f"{self.translator_url}/translate",
-                files=files,
-                data=data
-            )
-            
+
+            translate_url = f"{self.translator_url}/translate"
+
+            try:
+                response = client.post(
+                    translate_url,
+                    files=files,
+                    data=data
+                )
+            except httpx.RequestError as e:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Could not reach Translator API at {self.translator_url}. "
+                        f"Start snipshot-backend (snipshot_engine.server) or update TRANSLATOR_URL. "
+                        f"Details: {str(e)}"
+                    )
+                }
+
             if response.status_code == 200:
                 result = response.json()
                 return {"success": True, "data": result}
-            else:
-                return {"success": False, "error": f"Translation failed: {response.text}"}
+
+            if response.status_code == 404:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Translator endpoint not found at {translate_url}. "
+                        "This URL is likely pointing to the Database API instead of snipshot-backend."
+                    )
+                }
+
+            return {"success": False, "error": f"Translation failed ({response.status_code}): {response.text}"}
 
 
 # Global API client instance

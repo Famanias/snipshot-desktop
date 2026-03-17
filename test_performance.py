@@ -16,22 +16,26 @@ def test_api_performance():
     end = time.time()
     print(f'Folders API call took: {end - start:.2f} seconds')
     print(f'Success: {result["success"]}')
+    if not result["success"]:
+         print(f'Error: {result.get("error")}')
 
     if result['success']:
         folders = result['data'].get('folders', [])
         print(f'Found {len(folders)} folders')
 
-        # Test images API
-        print('Testing images API...')
-        start = time.time()
-        images_result = client.get_images(folder_id=0, per_page=20)
-        end = time.time()
-        print(f'Images API call took: {end - start:.2f} seconds')
-        print(f'Success: {images_result["success"]}')
+    # Test images API (Always run)
+    print('Testing images API...')
+    start = time.time()
+    images_result = client.get_images(folder_id=0, per_page=20)
+    end = time.time()
+    print(f'Images API call took: {end - start:.2f} seconds')
+    print(f'Success: {images_result["success"]}')
+    if not images_result["success"]:
+        print(f'Error: {images_result.get("error")}')
 
-        if images_result['success']:
-            images = images_result['data'].get('images', [])
-            print(f'Found {len(images)} images')
+    if images_result['success']:
+        images = images_result['data'].get('images', [])
+        print(f'Found {len(images)} images')
 
 if __name__ == '__main__':
     test_api_performance()

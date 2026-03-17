@@ -1,0 +1,27 @@
+# SnipShot Database API - Supabase Edition
+# Deploy to Render or any platform
+
+# Core
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+python-dotenv==1.0.0
+
+# Supabase
+supabase
+
+# Database (SQLAlchemy for complex queries)
+sqlalchemy[asyncio]==2.0.23
+asyncpg==0.29.0
+
+# JWT verification (for Supabase tokens)
+python-jose[cryptography]==3.3.0
+PyJWT==2.8.0
+
+# Validation
+pydantic==2.5.2
+pydantic[email]
+
+# HTTP client
+httpx>=0.28.1
+

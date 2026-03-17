@@ -1,0 +1,20 @@
+# SnipShot Desktop Application
+# Python 3.9+
+
+# GUI Framework
+PyQt5>=5.15.9
+PyQt5-Qt5>=5.15.2
+PyQt5-sip>=12.11.0
+
+# HTTP Client
+httpx>=0.24.0
+requests>=2.31.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Image processing
+Pillow>=10.0.0
+
+# For packaging (optional)
+pyinstaller>=6.0.0

@@ -23,14 +23,18 @@ class TranslationWorker(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     
-    def __init__(self, image_bytes: bytes, target_language: str = "ENG"):
+    def __init__(self, image_bytes: bytes, target_language: str = "ENG", translation_config: dict = None):
         super().__init__()
         self.image_bytes = image_bytes
         self.target_language = target_language
+        self.translation_config = translation_config
     
     def run(self):
         try:
-            config = copy.deepcopy(DEFAULT_TRANSLATION_CONFIG)
+            config = copy.deepcopy(
+                self.translation_config if self.translation_config is not None
+                else DEFAULT_TRANSLATION_CONFIG
+            )
             config.setdefault("translator", {})
             config["translator"]["target_lang"] = self.target_language
 
@@ -87,7 +91,7 @@ class TranslationWindow(QDialog):
     
     saved = pyqtSignal()
     
-    def __init__(self, captured_pixmap: QPixmap, parent=None, target_language: str = "ENG"):
+    def __init__(self, captured_pixmap: QPixmap, parent=None, target_language: str = "ENG", translation_config: dict = None):
         super().__init__(parent)
         self.setWindowTitle("SnipShot - Translate")
         self.setMinimumSize(500, 400)
@@ -95,6 +99,7 @@ class TranslationWindow(QDialog):
         
         self.captured_pixmap = captured_pixmap
         self.target_language = target_language
+        self.translation_config = translation_config
         self.translated_url = None
         self.folders = []
         
@@ -252,7 +257,7 @@ class TranslationWindow(QDialog):
         image_bytes = bytes(buffer.data())
         
         # Start worker thread
-        self.worker = TranslationWorker(image_bytes, self.target_language)
+        self.worker = TranslationWorker(image_bytes, self.target_language, self.translation_config)
         self.worker.finished.connect(self._on_translation_complete)
         self.worker.error.connect(self._on_translation_error)
         self.worker.start()

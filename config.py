@@ -17,6 +17,9 @@ TRANSLATION_INPAINTER = os.getenv("TRANSLATION_INPAINTER", "lama_large").lower()
 if TRANSLATION_INPAINTER not in {"lama_large", "none"}:
     TRANSLATION_INPAINTER = "lama_large"
 
+# Local mode storage
+LOCAL_STORAGE_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), "SnipShot")
+
 # App Settings
 APP_NAME = "SnipShot"
 APP_VERSION = "1.0.0"

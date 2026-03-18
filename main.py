@@ -119,6 +119,7 @@ class MainWindow(QMainWindow):
         self.login_screen = LoginWindow()
         self.login_screen.login_success.connect(self._on_login_success)
         self.login_screen.show_register.connect(self._show_register)
+        self.login_screen.local_mode_requested.connect(self._on_local_mode)
         self.stack.addWidget(self.login_screen)
         
         # Register screen
@@ -167,6 +168,14 @@ class MainWindow(QMainWindow):
     def _on_register_success(self):
         """Handle successful registration (with auto-login)"""
         self.register_screen.clear_fields()
+        self._show_dashboard()
+
+    def _on_local_mode(self):
+        """Switch to local mode — use local SQLite + filesystem storage."""
+        from local_api import LocalAPIClient
+        self._local_client = LocalAPIClient()
+        api_client.set_impl(self._local_client)
+        self.login_screen.clear_fields()
         self._show_dashboard()
     
     def _install_snip_shortcut(self, key: int = None):
@@ -217,6 +226,7 @@ class MainWindow(QMainWindow):
 
     def _on_logout(self):
         """Handle logout"""
+        api_client.reset()
         self._show_login()
     
     def _start_capture(self):

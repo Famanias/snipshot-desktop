@@ -99,7 +99,7 @@ class FlowLayout(QLayout):
 
 
 class ImageLoaderWorker(QThread):
-    """Background worker for loading images from URL"""
+    """Background worker for loading images from URL or local file"""
 
     finished = pyqtSignal(bytes)
     error = pyqtSignal(str)
@@ -110,8 +110,14 @@ class ImageLoaderWorker(QThread):
 
     def run(self):
         try:
+            import os
+            # Local file path — read directly from disk
+            if os.path.isfile(self.url):
+                with open(self.url, "rb") as f:
+                    self.finished.emit(f.read())
+                return
+            # Remote URL — fetch over HTTP
             import httpx
-            # Use httpx for better async HTTP handling
             with httpx.Client(timeout=15.0, follow_redirects=True) as client:
                 response = client.get(self.url)
                 response.raise_for_status()
@@ -277,11 +283,15 @@ class ImagePreviewDialog(QDialog):
         self.image_label.setStyleSheet("color: #EA4335; padding: 20px;")
     
     def _open_in_browser(self):
-        """Open image URL in browser"""
+        """Open image URL in browser or local file viewer"""
+        import os
         import webbrowser
         url = self.image_data.get("public_url")
         if url:
-            webbrowser.open(url)
+            if os.path.isfile(url):
+                os.startfile(url)
+            else:
+                webbrowser.open(url)
     
     def resizeEvent(self, event):
         """Re-scale image when dialog is resized"""

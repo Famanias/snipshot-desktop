@@ -72,7 +72,7 @@ cp .env.example .env
 # Edit .env with your Supabase credentials
 
 # Run
-uvicorn main:app --reload --port 8000
+python main.py
 ```
 
 ## Environment Variables

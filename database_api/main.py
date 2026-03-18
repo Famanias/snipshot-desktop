@@ -13,6 +13,7 @@ All-in-one Supabase backend.
 import os
 from contextlib import asynccontextmanager
 
+import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -90,3 +91,7 @@ def root():
 @app.get("/health")
 def health():
     return {"ok": True, "service": "database-api", "backend": "supabase"}
+
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

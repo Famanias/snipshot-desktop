@@ -15,6 +15,8 @@ from PyQt5.QtGui import QPixmap
 
 from api import api_client
 from config import DEFAULT_TRANSLATION_CONFIG
+from .theme import theme
+from . import styles
 
 
 class TranslationWorker(QThread):
@@ -114,16 +116,13 @@ class TranslationWindow(QDialog):
         
         # Title
         title = QLabel("Translating Image...")
-        title.setStyleSheet("font-size: 20px; font-weight: 600; color: #202124;")
+        title.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.c['text']};")
         layout.addWidget(title)
         self.title_label = title
         
         # Preview
         preview_frame = QFrame()
-        preview_frame.setStyleSheet("""
-            background-color: #F1F3F4;
-            border-radius: 8px;
-        """)
+        preview_frame.setStyleSheet(f"background-color: {theme.c['surface_alt']}; border-radius: 8px;")
         preview_frame.setFixedHeight(200)
         
         preview_layout = QVBoxLayout(preview_frame)
@@ -143,25 +142,14 @@ class TranslationWindow(QDialog):
         # Progress bar
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)  # Indeterminate
-        self.progress.setStyleSheet("""
-            QProgressBar {
-                background-color: #E8F0FE;
-                border: none;
-                border-radius: 4px;
-                height: 8px;
-            }
-            QProgressBar::chunk {
-                background-color: #4285F4;
-                border-radius: 4px;
-            }
-        """)
+        self.progress.setStyleSheet(styles.progress_bar_lg())
         layout.addWidget(self.progress)
         
         # Status label
         self.status_label = QLabel(
             f"Sending to translator ({self.target_language})... This may take 1-2 minutes."
         )
-        self.status_label.setStyleSheet("color: #5F6368; font-size: 13px;")
+        self.status_label.setStyleSheet(f"color: {theme.c['text_secondary']}; font-size: 13px;")
         self.status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_label)
         
@@ -174,18 +162,11 @@ class TranslationWindow(QDialog):
         
         # Folder selector
         folder_label = QLabel("Save to folder:")
-        folder_label.setStyleSheet("font-weight: 500; color: #202124;")
+        folder_label.setStyleSheet(f"font-weight: 500; color: {theme.c['text']};")
         save_layout.addWidget(folder_label)
         
         self.folder_combo = QComboBox()
-        self.folder_combo.setStyleSheet("""
-            QComboBox {
-                padding: 10px;
-                border: 1px solid #DADCE0;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-        """)
+        self.folder_combo.setStyleSheet(styles.folder_combo())
         self.folder_combo.addItem("Unfiled", 0)
         save_layout.addWidget(self.folder_combo)
         
@@ -198,39 +179,12 @@ class TranslationWindow(QDialog):
         button_layout.addStretch()
         
         self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #5F6368;
-                border: 1px solid #DADCE0;
-                border-radius: 4px;
-                padding: 10px 24px;
-                font-weight: 500;
-            }
-            QPushButton:hover {
-                background-color: #F1F3F4;
-            }
-        """)
+        self.cancel_btn.setStyleSheet(styles.dialog_cancel())
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_btn)
         
         self.save_btn = QPushButton("Save to Account")
-        self.save_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4285F4;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 10px 24px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #3367D6;
-            }
-            QPushButton:disabled {
-                background-color: #DADCE0;
-            }
-        """)
+        self.save_btn.setStyleSheet(styles.dialog_primary())
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._on_save)
         button_layout.addWidget(self.save_btn)
@@ -267,22 +221,11 @@ class TranslationWindow(QDialog):
         self.translated_url = data.get("image_url")
         
         self.title_label.setText("✓ Translation Complete!")
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 600; color: #34A853;")
+        self.title_label.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.c['success']};")
         
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
-        self.progress.setStyleSheet("""
-            QProgressBar {
-                background-color: #E6F4EA;
-                border: none;
-                border-radius: 4px;
-                height: 8px;
-            }
-            QProgressBar::chunk {
-                background-color: #34A853;
-                border-radius: 4px;
-            }
-        """)
+        self.progress.setStyleSheet(styles.progress_bar_success())
         
         self.status_label.setText(
             f"Translation successful ({self.target_language})! Choose a folder to save."
@@ -295,11 +238,11 @@ class TranslationWindow(QDialog):
     def _on_translation_error(self, error: str):
         """Handle translation error"""
         self.title_label.setText("✗ Translation Failed")
-        self.title_label.setStyleSheet("font-size: 20px; font-weight: 600; color: #EA4335;")
+        self.title_label.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.c['error']};")
         
         self.progress.setVisible(False)
         self.status_label.setText(f"Error: {error}")
-        self.status_label.setStyleSheet("color: #EA4335; font-size: 13px;")
+        self.status_label.setStyleSheet(f"color: {theme.c['error']}; font-size: 13px;")
         
         self.cancel_btn.setText("Close")
     
@@ -332,7 +275,7 @@ class TranslationWindow(QDialog):
     def _on_save_complete(self, data: dict):
         """Handle save completion"""
         self.status_label.setText("✓ Saved to your account!")
-        self.status_label.setStyleSheet("color: #34A853; font-size: 13px; font-weight: 500;")
+        self.status_label.setStyleSheet(f"color: {theme.c['success']}; font-size: 13px; font-weight: 500;")
         
         self.save_btn.setText("Saved!")
         self.saved.emit()

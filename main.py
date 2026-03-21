@@ -23,7 +23,8 @@ from PyQt5.QtGui import QIcon, QPixmap
 
 from config import APP_NAME, APP_VERSION, DEFAULT_SHORTCUT_KEY
 from ui import (
-    MAIN_STYLESHEET,
+    theme,
+    get_main_stylesheet,
     LoginWindow,
     RegisterWindow, 
     DashboardWindow,
@@ -304,7 +305,10 @@ def main():
     app.setApplicationVersion(APP_VERSION)
     
     # Set application style
-    app.setStyleSheet(MAIN_STYLESHEET)
+    app.setStyleSheet(get_main_stylesheet())
+
+    # Re-apply global stylesheet on theme change
+    theme.theme_changed.connect(lambda _: app.setStyleSheet(get_main_stylesheet()))
     
     # Set window icon (if exists)
     icon_path = resource_path("resources/icon.ico")

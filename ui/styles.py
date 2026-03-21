@@ -1,12 +1,43 @@
-"""
-SnipShot Desktop - Dynamic Stylesheets
+# CHANGELOG
+# ─────────────────────────────────────────────────────────────────────
+# - Added SPACE dict (base-8 grid: xs=4, sm=8, md=16, lg=24, xl=32, xxl=48)
+# - Added FONT dict (display/heading/body/label/caption/hint scale)
+# - Removed primary_button(), text_button(), local_mode_button(),
+#   dialog_primary(), dialog_cancel() — replaced by StyledButton
+# - Removed outline_button(), close_button(), shortcut_button(),
+#   load_more_button(), back_button(), new_folder_button() — use StyledButton
+# - Kept auth_container(), input_field(), progress_bar_success(),
+#   progress_bar_lg(), folder_card(), image_card(), settings_input(),
+#   nav_button(), sidebar_action_button(), theme_toggle_button(),
+#   folder_combo(), preview_scroll(), dialog_input()
+# - Updated all style helpers to use SPACE / FONT constants
+# - Added card() — generic elevated surface card style
+# - Added get_tooltip_stylesheet() — for QApplication-level QToolTip
+# - Added apply_card_shadow() — QGraphicsDropShadowEffect helper
+# - Removed CSS box-shadow from auth_container() (handled by apply_card_shadow)
+# - Added password_strength_bar() for register page
+# ─────────────────────────────────────────────────────────────────────
 
-Theme-aware stylesheet generation.  All colour values come from the
-active ThemeManager palette so that a single toggle switches the
-entire application between light and dark mode.
-"""
+from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect
+from PyQt5.QtGui import QColor
 
 from .theme import theme
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# Design-system constants
+# ═════════════════════════════════════════════════════════════════════════
+
+SPACE = {"xs": 4, "sm": 8, "md": 16, "lg": 24, "xl": 32, "xxl": 48}
+
+FONT = {
+    "display":  {"size": 28, "weight": 700},
+    "heading":  {"size": 18, "weight": 600},
+    "body":     {"size": 14, "weight": 400},
+    "label":    {"size": 13, "weight": 600},
+    "caption":  {"size": 12, "weight": 400},
+    "hint":     {"size": 12, "weight": 400},
+}
 
 
 def _c():
@@ -15,11 +46,27 @@ def _c():
 
 
 # ═════════════════════════════════════════════════════════════════════════
+# Elevation helper
+# ═════════════════════════════════════════════════════════════════════════
+
+def apply_card_shadow(widget: QWidget):
+    """Apply a subtle drop shadow to a card / dialog frame."""
+    shadow = QGraphicsDropShadowEffect()
+    shadow.setBlurRadius(24)
+    shadow.setOffset(0, 4)
+    alpha = 82 if theme.is_dark else 20  # 0.32*255≈82, 0.08*255≈20
+    shadow.setColor(QColor(0, 0, 0, alpha))
+    widget.setGraphicsEffect(shadow)
+
+
+# ═════════════════════════════════════════════════════════════════════════
 # Global application stylesheet
 # ═════════════════════════════════════════════════════════════════════════
 
 def get_main_stylesheet() -> str:
     c = _c()
+    f_body = FONT["body"]
+    f_caption = FONT["caption"]
     return f"""
     /* ============== Global ============== */
     QMainWindow, QDialog {{
@@ -28,7 +75,7 @@ def get_main_stylesheet() -> str:
 
     QWidget {{
         font-family: 'Segoe UI', 'Roboto', sans-serif;
-        font-size: 13px;
+        font-size: {f_body['size']}px;
         color: {c['text']};
     }}
 
@@ -37,11 +84,11 @@ def get_main_stylesheet() -> str:
         background-color: {c['primary']};
         color: white;
         border: none;
-        border-radius: 6px;
-        padding: 12px 24px;
+        border-radius: {SPACE['sm']}px;
+        padding: {SPACE['md']}px {SPACE['lg']}px;
         font-weight: 600;
-        font-size: 14px;
-        min-height: 24px;
+        font-size: {f_body['size']}px;
+        min-height: {SPACE['lg']}px;
     }}
 
     QPushButton:hover {{
@@ -79,7 +126,7 @@ def get_main_stylesheet() -> str:
     QPushButton[class="icon"] {{
         background-color: transparent;
         border: none;
-        padding: 8px;
+        padding: {SPACE['sm']}px;
         border-radius: 20px;
     }}
 
@@ -91,16 +138,16 @@ def get_main_stylesheet() -> str:
     QLineEdit {{
         background-color: {c['input_bg']};
         border: 1px solid {c['input_border']};
-        border-radius: 6px;
-        padding: 12px 16px;
-        font-size: 14px;
+        border-radius: {SPACE['sm']}px;
+        padding: {SPACE['md']}px {SPACE['md']}px;
+        font-size: {f_body['size']}px;
         min-height: 20px;
         color: {c['text']};
     }}
 
     QLineEdit:focus {{
         border: 2px solid {c['primary']};
-        padding: 11px 15px;
+        padding: {SPACE['md'] - 1}px {SPACE['md'] - 1}px;
     }}
 
     QLineEdit:disabled {{
@@ -119,18 +166,18 @@ def get_main_stylesheet() -> str:
     }}
 
     QLabel[class="title"] {{
-        font-size: 24px;
-        font-weight: 600;
+        font-size: {FONT['display']['size']}px;
+        font-weight: {FONT['display']['weight']};
     }}
 
     QLabel[class="subtitle"] {{
-        font-size: 14px;
+        font-size: {f_body['size']}px;
         color: {c['text_secondary']};
     }}
 
     QLabel[class="error"] {{
         color: {c['error']};
-        font-size: 12px;
+        font-size: {f_caption['size']}px;
     }}
 
     QLabel[class="link"] {{
@@ -146,7 +193,7 @@ def get_main_stylesheet() -> str:
     QFrame[class="card"] {{
         background-color: {c['surface']};
         border: 1px solid {c['border']};
-        border-radius: 8px;
+        border-radius: {SPACE['sm']}px;
     }}
 
     QFrame[class="sidebar"] {{
@@ -162,13 +209,13 @@ def get_main_stylesheet() -> str:
 
     QScrollBar:vertical {{
         background-color: {c['scrollbar_bg']};
-        width: 8px;
-        border-radius: 4px;
+        width: {SPACE['sm']}px;
+        border-radius: {SPACE['xs']}px;
     }}
 
     QScrollBar::handle:vertical {{
         background-color: {c['scrollbar']};
-        border-radius: 4px;
+        border-radius: {SPACE['xs']}px;
         min-height: 40px;
     }}
 
@@ -182,13 +229,13 @@ def get_main_stylesheet() -> str:
 
     QScrollBar:horizontal {{
         background-color: {c['scrollbar_bg']};
-        height: 8px;
-        border-radius: 4px;
+        height: {SPACE['sm']}px;
+        border-radius: {SPACE['xs']}px;
     }}
 
     QScrollBar::handle:horizontal {{
         background-color: {c['scrollbar']};
-        border-radius: 4px;
+        border-radius: {SPACE['xs']}px;
         min-width: 40px;
     }}
 
@@ -208,7 +255,7 @@ def get_main_stylesheet() -> str:
     }}
 
     QListWidget::item {{
-        padding: 12px 16px;
+        padding: {SPACE['md']}px {SPACE['md']}px;
         border-radius: 0px;
         border-left: 3px solid transparent;
     }}
@@ -227,12 +274,12 @@ def get_main_stylesheet() -> str:
     QMenu {{
         background-color: {c['surface']};
         border: 1px solid {c['border']};
-        border-radius: 4px;
-        padding: 8px 0;
+        border-radius: {SPACE['xs']}px;
+        padding: {SPACE['sm']}px 0;
     }}
 
     QMenu::item {{
-        padding: 8px 32px;
+        padding: {SPACE['sm']}px {SPACE['xl']}px;
         color: {c['text']};
     }}
 
@@ -244,14 +291,14 @@ def get_main_stylesheet() -> str:
     QProgressBar {{
         background-color: {c['primary_light']};
         border: none;
-        border-radius: 4px;
-        height: 4px;
+        border-radius: {SPACE['xs']}px;
+        height: {SPACE['xs']}px;
         text-align: center;
     }}
 
     QProgressBar::chunk {{
         background-color: {c['primary']};
-        border-radius: 4px;
+        border-radius: {SPACE['xs']}px;
     }}
 
     /* ============== Message Box ============== */
@@ -261,7 +308,7 @@ def get_main_stylesheet() -> str:
 
     QMessageBox QLabel {{
         color: {c['text']};
-        font-size: 14px;
+        font-size: {f_body['size']}px;
     }}
 
     /* ============== Tool Tip ============== */
@@ -269,9 +316,9 @@ def get_main_stylesheet() -> str:
         background-color: {c['tooltip_bg']};
         color: {c['tooltip_text']};
         border: none;
-        padding: 8px 12px;
-        border-radius: 4px;
-        font-size: 12px;
+        padding: {SPACE['sm']}px {SPACE['md']}px;
+        border-radius: 6px;
+        font-size: {f_caption['size']}px;
     }}
 
     /* ============== Tab Widget ============== */
@@ -282,7 +329,7 @@ def get_main_stylesheet() -> str:
 
     QTabBar::tab {{
         background-color: transparent;
-        padding: 12px 24px;
+        padding: {SPACE['md']}px {SPACE['lg']}px;
         border-bottom: 2px solid transparent;
         color: {c['text_secondary']};
     }}
@@ -300,8 +347,8 @@ def get_main_stylesheet() -> str:
     QComboBox {{
         background-color: {c['input_bg']};
         border: 1px solid {c['input_border']};
-        border-radius: 6px;
-        padding: 8px 12px;
+        border-radius: {SPACE['sm']}px;
+        padding: {SPACE['sm']}px {SPACE['md']}px;
         color: {c['text']};
     }}
 
@@ -325,8 +372,8 @@ def get_main_stylesheet() -> str:
     QSpinBox, QDoubleSpinBox {{
         background-color: {c['input_bg']};
         border: 1px solid {c['input_border']};
-        border-radius: 6px;
-        padding: 8px 12px;
+        border-radius: {SPACE['sm']}px;
+        padding: {SPACE['sm']}px {SPACE['md']}px;
         color: {c['text']};
     }}
 
@@ -337,6 +384,21 @@ def get_main_stylesheet() -> str:
     /* ============== Input Dialog ============== */
     QInputDialog {{
         background-color: {c['surface']};
+    }}
+    """
+
+
+def get_tooltip_stylesheet() -> str:
+    """Standalone QToolTip stylesheet for QApplication level."""
+    c = _c()
+    return f"""
+    QToolTip {{
+        background-color: {c['tooltip_bg']};
+        color: {c['tooltip_text']};
+        border: none;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: {FONT['caption']['size']}px;
     }}
     """
 
@@ -353,7 +415,7 @@ def auth_container():
         QFrame#authContainer {{
             background-color: {c['surface']};
             border: 1px solid {c['border']};
-            border-radius: 12px;
+            border-radius: {SPACE['md']}px;
         }}
     """
 
@@ -362,79 +424,58 @@ def input_field():
     c = _c()
     return f"""
         QLineEdit {{
-            padding: 12px 16px;
+            padding: {SPACE['md']}px {SPACE['md']}px;
             border: 1px solid {c['input_border']};
-            border-radius: 6px;
-            font-size: 14px;
+            border-radius: {SPACE['sm']}px;
+            font-size: {FONT['body']['size']}px;
             background-color: {c['input_bg']};
             color: {c['text']};
         }}
         QLineEdit:focus {{
             border: 2px solid {c['primary']};
-            padding: 11px 15px;
+            padding: {SPACE['md'] - 1}px {SPACE['md'] - 1}px;
         }}
     """
 
 
-def primary_button():
+# ── Cards ──────────────────────────────────────────────────────────────
+
+def card():
+    """Generic elevated surface card style."""
     c = _c()
     return f"""
-        QPushButton {{
-            background-color: {c['primary']};
-            color: white;
-            border: none;
-            border-radius: 6px;
-            padding: 14px 24px;
-            font-size: 15px;
-            font-weight: 600;
-        }}
-        QPushButton:hover {{
-            background-color: {c['primary_dark']};
-        }}
-        QPushButton:pressed {{
-            background-color: {c['primary_dark']};
-        }}
-        QPushButton:disabled {{
-            background-color: {c['disabled_bg']};
-            color: {c['disabled_text']};
-        }}
-    """
-
-
-def text_button():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: transparent;
-            color: {c['primary']};
-            border: none;
-            font-weight: 600;
-            padding: 0;
-        }}
-        QPushButton:hover {{
-            text-decoration: underline;
-        }}
-    """
-
-
-def local_mode_button():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: {c['surface_alt']};
-            color: {c['text']};
+        QFrame {{
+            background-color: {c['surface']};
             border: 1px solid {c['border']};
-            border-radius: 6px;
-            padding: 12px 24px;
-            font-size: 14px;
-            font-weight: 500;
+            border-radius: {SPACE['sm']}px;
         }}
-        QPushButton:hover {{
-            background-color: {c['hover']};
-            border-color: {c['input_border']};
+    """
+
+
+def folder_card():
+    c = _c()
+    return f"""
+        FolderCard {{
+            background-color: {c['surface']};
+            border: 1px solid {c['border']};
+            border-radius: {SPACE['sm']}px;
         }}
-        QPushButton:pressed {{
-            background-color: {c['border']};
+        FolderCard:hover {{
+            border-color: {c['primary']};
+        }}
+    """
+
+
+def image_card():
+    c = _c()
+    return f"""
+        ImageCard {{
+            background-color: {c['surface']};
+            border: 1px solid {c['border']};
+            border-radius: {SPACE['sm']}px;
+        }}
+        ImageCard:hover {{
+            border-color: {c['primary']};
         }}
     """
 
@@ -448,9 +489,9 @@ def sidebar_action_button():
             background-color: {c['surface']};
             color: {c['text']};
             border: 1px solid {c['border']};
-            border-radius: 24px;
-            padding: 12px 20px;
-            font-size: 14px;
+            border-radius: {SPACE['lg']}px;
+            padding: {SPACE['md']}px {SPACE['lg']}px;
+            font-size: {FONT['body']['size']}px;
             font-weight: 500;
             text-align: left;
         }}
@@ -468,9 +509,9 @@ def nav_button(active: bool):
                 background-color: {c['nav_active_bg']};
                 color: {c['nav_active_text']};
                 border: none;
-                border-radius: 24px;
-                padding: 10px 16px;
-                font-size: 14px;
+                border-radius: {SPACE['lg']}px;
+                padding: {SPACE['sm']}px {SPACE['md']}px;
+                font-size: {FONT['body']['size']}px;
                 text-align: left;
                 font-weight: 500;
             }}
@@ -480,60 +521,13 @@ def nav_button(active: bool):
             background-color: transparent;
             color: {c['text_secondary']};
             border: none;
-            border-radius: 24px;
-            padding: 10px 16px;
-            font-size: 14px;
+            border-radius: {SPACE['lg']}px;
+            padding: {SPACE['sm']}px {SPACE['md']}px;
+            font-size: {FONT['body']['size']}px;
             text-align: left;
         }}
         QPushButton:hover {{
             background-color: {c['hover']};
-        }}
-    """
-
-
-def new_folder_button():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: {c['surface']};
-            color: {c['primary']};
-            border: 1px solid {c['primary']};
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: 500;
-        }}
-        QPushButton:hover {{
-            background-color: {c['primary_light']};
-        }}
-    """
-
-
-# ── Cards ──────────────────────────────────────────────────────────────
-
-def folder_card():
-    c = _c()
-    return f"""
-        FolderCard {{
-            background-color: {c['surface']};
-            border: 1px solid {c['border']};
-            border-radius: 8px;
-        }}
-        FolderCard:hover {{
-            border-color: {c['primary']};
-        }}
-    """
-
-
-def image_card():
-    c = _c()
-    return f"""
-        ImageCard {{
-            background-color: {c['surface']};
-            border: 1px solid {c['border']};
-            border-radius: 8px;
-        }}
-        ImageCard:hover {{
-            border-color: {c['primary']};
         }}
     """
 
@@ -544,83 +538,15 @@ def dialog_input():
     c = _c()
     return f"""
         QLineEdit {{
-            padding: 10px;
+            padding: {SPACE['sm']}px {SPACE['md']}px;
             border: 1px solid {c['input_border']};
-            border-radius: 4px;
-            font-size: 14px;
+            border-radius: {SPACE['sm']}px;
+            font-size: {FONT['body']['size']}px;
             background-color: {c['input_bg']};
             color: {c['text']};
         }}
         QLineEdit:focus {{
             border: 2px solid {c['primary']};
-        }}
-    """
-
-
-def dialog_cancel():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: transparent;
-            color: {c['text_secondary']};
-            border: 1px solid {c['border']};
-            border-radius: 4px;
-            padding: 10px 24px;
-            font-weight: 500;
-        }}
-        QPushButton:hover {{
-            background-color: {c['hover']};
-        }}
-    """
-
-
-def dialog_primary():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: {c['primary']};
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 10px 24px;
-            font-weight: 600;
-        }}
-        QPushButton:hover {{
-            background-color: {c['primary_dark']};
-        }}
-    """
-
-
-def outline_button():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: transparent;
-            color: {c['primary']};
-            border: 1px solid {c['primary']};
-            border-radius: 4px;
-            padding: 8px 16px;
-            font-weight: 500;
-        }}
-        QPushButton:hover {{
-            background-color: {c['primary_light']};
-        }}
-    """
-
-
-def close_button():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: {c['primary']};
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 8px 24px;
-            font-weight: 500;
-        }}
-        QPushButton:hover {{
-            background-color: {c['primary_dark']};
         }}
     """
 
@@ -632,7 +558,7 @@ def preview_scroll():
     return f"""
         QScrollArea {{
             border: 1px solid {c['border']};
-            border-radius: 8px;
+            border-radius: {SPACE['sm']}px;
             background-color: {c['surface_alt']};
         }}
     """
@@ -644,12 +570,12 @@ def progress_bar_lg():
         QProgressBar {{
             background-color: {c['primary_light']};
             border: none;
-            border-radius: 4px;
-            height: 8px;
+            border-radius: {SPACE['xs']}px;
+            height: {SPACE['sm']}px;
         }}
         QProgressBar::chunk {{
             background-color: {c['primary']};
-            border-radius: 4px;
+            border-radius: {SPACE['xs']}px;
         }}
     """
 
@@ -660,12 +586,12 @@ def progress_bar_success():
         QProgressBar {{
             background-color: {c['success_bg']};
             border: none;
-            border-radius: 4px;
-            height: 8px;
+            border-radius: {SPACE['xs']}px;
+            height: {SPACE['sm']}px;
         }}
         QProgressBar::chunk {{
             background-color: {c['success']};
-            border-radius: 4px;
+            border-radius: {SPACE['xs']}px;
         }}
     """
 
@@ -676,10 +602,10 @@ def settings_input():
     c = _c()
     return f"""
         QSpinBox, QDoubleSpinBox, QComboBox {{
-            padding: 8px 10px;
+            padding: {SPACE['sm']}px {SPACE['sm']}px;
             border: 1px solid {c['input_border']};
-            border-radius: 4px;
-            font-size: 13px;
+            border-radius: {SPACE['sm']}px;
+            font-size: {FONT['label']['size']}px;
             min-width: 240px;
             background: {c['input_bg']};
             color: {c['text']};
@@ -696,68 +622,14 @@ def settings_input():
     """
 
 
-def shortcut_button():
-    c = _c()
-    return f"""
-        QPushButton {{
-            padding: 8px 16px;
-            background-color: {c['primary']};
-            color: white;
-            border: none;
-            border-radius: 4px;
-            font-size: 13px;
-            font-weight: 500;
-        }}
-        QPushButton:hover {{ background-color: {c['primary_dark']}; }}
-        QPushButton[waiting="true"] {{
-            background-color: {c['error']};
-        }}
-    """
-
-
-def load_more_button():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: {c['primary']};
-            color: white;
-            border: none;
-            border-radius: 4px;
-            padding: 10px 20px;
-            font-weight: 500;
-            margin: 16px 0;
-        }}
-        QPushButton:hover {{
-            background-color: {c['primary_dark']};
-        }}
-    """
-
-
-def back_button():
-    c = _c()
-    return f"""
-        QPushButton {{
-            background-color: transparent;
-            color: {c['primary']};
-            border: none;
-            padding: 8px 0;
-            font-size: 13px;
-            text-align: left;
-        }}
-        QPushButton:hover {{
-            text-decoration: underline;
-        }}
-    """
-
-
 def folder_combo():
     c = _c()
     return f"""
         QComboBox {{
-            padding: 10px;
+            padding: {SPACE['sm']}px {SPACE['md']}px;
             border: 1px solid {c['input_border']};
-            border-radius: 4px;
-            font-size: 14px;
+            border-radius: {SPACE['sm']}px;
+            font-size: {FONT['body']['size']}px;
             background-color: {c['input_bg']};
             color: {c['text']};
         }}
@@ -780,9 +652,9 @@ def theme_toggle_button(active: bool):
                 color: white;
                 border: none;
                 border-radius: 6px;
-                padding: 8px 20px;
-                font-weight: 600;
-                font-size: 13px;
+                padding: {SPACE['sm']}px {SPACE['lg']}px;
+                font-weight: {FONT['label']['weight']};
+                font-size: {FONT['label']['size']}px;
             }}
         """
     return f"""
@@ -791,8 +663,8 @@ def theme_toggle_button(active: bool):
             color: {c['text_secondary']};
             border: none;
             border-radius: 6px;
-            padding: 8px 20px;
-            font-size: 13px;
+            padding: {SPACE['sm']}px {SPACE['lg']}px;
+            font-size: {FONT['label']['size']}px;
         }}
         QPushButton:hover {{
             background-color: {c['hover']};
@@ -800,9 +672,31 @@ def theme_toggle_button(active: bool):
     """
 
 
-# ═════════════════════════════════════════════════════════════════════════
-# Legacy / Capture (not themed)
-# ═════════════════════════════════════════════════════════════════════════
+# ── Password-strength bar ─────────────────────────────────────────────
+
+def password_strength_bar(level: int):
+    """Return stylesheet for the password strength QProgressBar (0-4)."""
+    colors = {
+        0: _c()["disabled_bg"],
+        1: _c()["error"],
+        2: "#F59E0B",
+        3: _c()["primary"],
+        4: _c()["success"],
+    }
+    colour = colors.get(level, colors[0])
+    return f"""
+        QProgressBar {{
+            background-color: {_c()['surface_alt']};
+            border: none;
+            border-radius: 2px;
+            height: {SPACE['xs']}px;
+        }}
+        QProgressBar::chunk {{
+            background-color: {colour};
+            border-radius: 2px;
+        }}
+    """
+
 
 CAPTURE_STYLESHEET = """
 QWidget#captureOverlay {

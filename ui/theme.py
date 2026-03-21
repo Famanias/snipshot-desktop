@@ -20,11 +20,11 @@ class ThemeManager(QObject):
 
     # ── Light palette (improved web-app feel) ──────────────────────────
     LIGHT = {
-        "bg":              "#F5F5F7",
+        "bg":              "#F0F2F5",
         "surface":         "#FFFFFF",
         "surface_alt":     "#F0F1F3",
         "sidebar":         "#F0F1F3",
-        "border":          "#E2E5E9",
+        "border":          "#D1D5DB",
         "border_light":    "#ECEEF1",
         "primary":         "#0EA5E9",
         "primary_dark":    "#0284C7",
@@ -55,9 +55,9 @@ class ThemeManager(QObject):
     DARK = {
         "bg":              "#0A0A0B",
         "surface":         "#141416",
-        "surface_alt":     "#1A1A1E",
+        "surface_alt":     "#1E1E24",
         "sidebar":         "#0F0F11",
-        "border":          "#1E1E22",
+        "border":          "#2A2A2E",
         "border_light":    "#2A2A2E",
         "primary":         "#0EA5E9",
         "primary_dark":    "#0284C7",
@@ -65,7 +65,7 @@ class ThemeManager(QObject):
         "primary_subtle":  "#0A1929",
         "text":            "#F9FAFB",
         "text_secondary":  "#9CA3AF",
-        "text_tertiary":   "#6B7280",
+        "text_tertiary":   "#9CA3AF",
         "hover":           "#1F1F23",
         "input_bg":        "#141416",
         "input_border":    "#2A2A2E",
@@ -118,6 +118,12 @@ class ThemeManager(QObject):
 
     def toggle(self):
         self.set_mode("dark" if self._mode == "light" else "light")
+
+    def rgba(self, key: str, alpha: float) -> str:
+        """Convert a hex palette colour to an rgba() CSS string."""
+        hex_color = self.c[key].lstrip("#")
+        r, g, b = int(hex_color[:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+        return f"rgba({r}, {g}, {b}, {alpha})"
 
     # ── Persistence ────────────────────────────────────────────────────
     def _config_path(self):

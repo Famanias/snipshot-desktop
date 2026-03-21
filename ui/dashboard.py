@@ -1,3 +1,15 @@
+# CHANGELOG
+# ─────────────────────────────────────────────────────────────────────
+# - Replaced all addSpacing() values with SPACE constants (base-8 grid)
+# - Replaced inline button styles with StyledButton where appropriate
+# - All font/spacing values reference FONT/SPACE constants
+# - apply_card_shadow() on dialogs and settings card
+# - ImagePreviewDialog uses StyledButton for actions
+# - CreateFolderDialog uses StyledButton
+# - Settings rendering uses SPACE/FONT consistently
+# - Preserved all signals, slot connections, and API call logic exactly
+# ─────────────────────────────────────────────────────────────────────
+
 """
 SnipShot Desktop - Dashboard Window
 
@@ -10,7 +22,7 @@ from PyQt5.QtWidgets import (
     QInputDialog, QMessageBox, QSizePolicy, QListWidget,
     QListWidgetItem, QStackedWidget, QProgressBar, QDialog,
     QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox,
-    QLayout, QSpinBox, QDoubleSpinBox
+    QLayout, QSpinBox, QDoubleSpinBox,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread, QRect, QPoint
 from PyQt5.QtGui import QIcon, QPixmap, QCursor, QFont, QKeySequence
@@ -28,6 +40,8 @@ from config import (
 from utils import format_file_size, format_date
 from .theme import theme
 from . import styles
+from .styles import SPACE, FONT, apply_card_shadow
+from .components import StyledButton
 
 
 class FlowLayout(QLayout):
@@ -144,8 +158,8 @@ class ImagePreviewDialog(QDialog):
     def _setup_ui(self):
         c = theme.c
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(SPACE["md"], SPACE["md"], SPACE["md"], SPACE["md"])
+        layout.setSpacing(SPACE["md"])
 
         # Image container with scroll
         self.scroll_area = QScrollArea()
@@ -162,7 +176,8 @@ class ImagePreviewDialog(QDialog):
         self.loading_label = QLabel("Loading image...")
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setStyleSheet(
-            f"color: {c['text_secondary']}; font-size: 14px; padding: 20px; background-color: transparent;"
+            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
+            f"padding: {SPACE['lg']}px; background-color: transparent;"
         )
         self.image_label.setText("Loading...")
 
@@ -177,20 +192,18 @@ class ImagePreviewDialog(QDialog):
 
         filename = self.image_data.get("filename", "Unknown")
         self.filename_label = QLabel(filename)
-        self.filename_label.setStyleSheet(f"font-weight: 500; color: {c['text']}; background-color: transparent;")
+        self.filename_label.setStyleSheet(
+            f"font-weight: 500; color: {c['text']}; background-color: transparent;"
+        )
         info_layout.addWidget(self.filename_label)
 
         info_layout.addStretch()
 
-        open_browser_btn = QPushButton("Open in Browser")
-        open_browser_btn.setCursor(Qt.PointingHandCursor)
-        open_browser_btn.setStyleSheet(styles.outline_button())
+        open_browser_btn = StyledButton("Open in Browser", variant="secondary")
         open_browser_btn.clicked.connect(self._open_in_browser)
         info_layout.addWidget(open_browser_btn)
 
-        close_btn = QPushButton("Close")
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet(styles.close_button())
+        close_btn = StyledButton("Close", variant="primary")
         close_btn.clicked.connect(self.accept)
         info_layout.addWidget(close_btn)
 
@@ -225,7 +238,7 @@ class ImagePreviewDialog(QDialog):
                 available_size.width() - 20,
                 available_size.height() - 20,
                 Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
+                Qt.SmoothTransformation,
             )
             self.image_label.setPixmap(scaled)
             self.original_pixmap = pixmap
@@ -235,7 +248,9 @@ class ImagePreviewDialog(QDialog):
     def _on_load_error(self, error: str):
         self.progress.hide()
         self.image_label.setText(f"Failed to load image:\n{error}")
-        self.image_label.setStyleSheet(f"color: {theme.c['error']}; padding: 20px; background-color: transparent;")
+        self.image_label.setStyleSheet(
+            f"color: {theme.c['error']}; padding: {SPACE['lg']}px; background-color: transparent;"
+        )
 
     def _open_in_browser(self):
         import os
@@ -249,13 +264,13 @@ class ImagePreviewDialog(QDialog):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, 'original_pixmap') and self.original_pixmap:
+        if hasattr(self, "original_pixmap") and self.original_pixmap:
             available_size = self.scroll_area.size()
             scaled = self.original_pixmap.scaled(
                 available_size.width() - 20,
                 available_size.height() - 20,
                 Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
+                Qt.SmoothTransformation,
             )
             self.image_label.setPixmap(scaled)
 
@@ -278,17 +293,22 @@ class CreateFolderDialog(QDialog):
     def _setup_ui(self):
         c = theme.c
         layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(SPACE["md"])
+        layout.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
 
         # Title
         title = QLabel("Create New Folder")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {c['text']}; background-color: transparent;")
+        title.setStyleSheet(
+            f"font-size: {FONT['heading']['size']}px; font-weight: {FONT['heading']['weight']}; "
+            f"color: {c['text']}; background-color: transparent;"
+        )
         layout.addWidget(title)
 
         # Name input
         name_label = QLabel("Folder Name")
-        name_label.setStyleSheet(f"font-weight: 500; color: {c['text_secondary']}; background-color: transparent;")
+        name_label.setStyleSheet(
+            f"font-weight: 500; color: {c['text_secondary']}; background-color: transparent;"
+        )
         layout.addWidget(name_label)
 
         self.name_input = QLineEdit()
@@ -298,7 +318,9 @@ class CreateFolderDialog(QDialog):
 
         # Description input
         desc_label = QLabel("Description (optional)")
-        desc_label.setStyleSheet(f"font-weight: 500; color: {c['text_secondary']}; background-color: transparent;")
+        desc_label.setStyleSheet(
+            f"font-weight: 500; color: {c['text_secondary']}; background-color: transparent;"
+        )
         layout.addWidget(desc_label)
 
         self.desc_input = QLineEdit()
@@ -310,13 +332,11 @@ class CreateFolderDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
 
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setStyleSheet(styles.dialog_cancel())
+        cancel_btn = StyledButton("Cancel", variant="secondary")
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
-        self.create_btn = QPushButton("Create")
-        self.create_btn.setStyleSheet(styles.dialog_primary())
+        self.create_btn = StyledButton("Create", variant="primary")
         self.create_btn.clicked.connect(self.accept)
         button_layout.addWidget(self.create_btn)
 
@@ -348,22 +368,30 @@ class FolderCard(QFrame):
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(8)
+        layout.setSpacing(SPACE["sm"])
 
-        icon_label = QLabel("📁")
-        icon_label.setStyleSheet("font-size: 48px; background-color: transparent;")
+        icon_label = QLabel("\U0001F4C1")
+        icon_label.setStyleSheet(
+            f"font-size: {SPACE['xxl']}px; background-color: transparent;"
+        )
         icon_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_label)
 
         name_label = QLabel(self.folder_name)
-        name_label.setStyleSheet(f"font-weight: 600; color: {c['text']}; font-size: 14px; background-color: transparent;")
+        name_label.setStyleSheet(
+            f"font-weight: {FONT['label']['weight']}; color: {c['text']}; "
+            f"font-size: {FONT['body']['size']}px; background-color: transparent;"
+        )
         name_label.setAlignment(Qt.AlignCenter)
         name_label.setWordWrap(True)
         layout.addWidget(name_label)
 
         image_label_text = "image" if self.image_count == 1 else "images"
         count_label = QLabel(f"{self.image_count} {image_label_text}")
-        count_label.setStyleSheet(f"color: {c['text_secondary']}; font-size: 12px; background-color: transparent;")
+        count_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['caption']['size']}px; "
+            "background-color: transparent;"
+        )
         count_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(count_label)
 
@@ -376,12 +404,18 @@ class FolderCard(QFrame):
     def _show_context_menu(self, pos):
         menu = QMenu(self)
         open_action = menu.addAction("Open")
-        open_action.triggered.connect(lambda: self.clicked.emit(self.folder_id, self.folder_name))
+        open_action.triggered.connect(
+            lambda: self.clicked.emit(self.folder_id, self.folder_name)
+        )
         rename_action = menu.addAction("Rename")
-        rename_action.triggered.connect(lambda: self.rename_requested.emit(self.folder_id, self.folder_name))
+        rename_action.triggered.connect(
+            lambda: self.rename_requested.emit(self.folder_id, self.folder_name)
+        )
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
-        delete_action.triggered.connect(lambda: self.delete_requested.emit(self.folder_id, self.folder_name))
+        delete_action.triggered.connect(
+            lambda: self.delete_requested.emit(self.folder_id, self.folder_name)
+        )
         menu.exec_(pos)
 
 
@@ -405,33 +439,44 @@ class ImageCard(QFrame):
         self.setFixedSize(180, 200)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(SPACE["sm"], SPACE["sm"], SPACE["sm"], SPACE["sm"])
+        layout.setSpacing(SPACE["sm"])
 
         # Thumbnail placeholder
         thumb_frame = QFrame()
-        thumb_frame.setStyleSheet(f"background-color: {c['surface_alt']}; border-radius: 4px;")
+        thumb_frame.setStyleSheet(
+            f"background-color: {c['surface_alt']}; "
+            f"border-radius: {SPACE['xs']}px;"
+        )
         thumb_frame.setFixedHeight(120)
         thumb_layout = QVBoxLayout(thumb_frame)
         thumb_layout.setAlignment(Qt.AlignCenter)
-        icon_label = QLabel("🖼️")
-        icon_label.setStyleSheet("font-size: 36px; background-color: transparent;")
+        icon_label = QLabel("\U0001F5BC\uFE0F")
+        icon_label.setStyleSheet(
+            f"font-size: 36px; background-color: transparent;"
+        )
         icon_label.setAlignment(Qt.AlignCenter)
         thumb_layout.addWidget(icon_label)
         layout.addWidget(thumb_frame)
 
         # Filename
         name_label = QLabel(self.image_data.get("filename", "Untitled"))
-        name_label.setStyleSheet(f"font-weight: 500; color: {c['text']}; font-size: 12px; background-color: transparent;")
+        name_label.setStyleSheet(
+            f"font-weight: 500; color: {c['text']}; "
+            f"font-size: {FONT['caption']['size']}px; background-color: transparent;"
+        )
         name_label.setWordWrap(True)
-        name_label.setMaximumHeight(32)
+        name_label.setMaximumHeight(SPACE["xl"])
         layout.addWidget(name_label)
 
         # File size
         size = self.image_data.get("file_size")
         size_text = format_file_size(size) if size else ""
         size_label = QLabel(size_text)
-        size_label.setStyleSheet(f"color: {c['text_secondary']}; font-size: 11px; background-color: transparent;")
+        size_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['hint']['size']}px; "
+            "background-color: transparent;"
+        )
         layout.addWidget(size_label)
 
     def mousePressEvent(self, event):
@@ -445,12 +490,18 @@ class ImageCard(QFrame):
         open_action = menu.addAction("View")
         open_action.triggered.connect(lambda: self.clicked.emit(self.image_data))
         rename_action = menu.addAction("Rename")
-        rename_action.triggered.connect(lambda: self.rename_requested.emit(self.image_data))
+        rename_action.triggered.connect(
+            lambda: self.rename_requested.emit(self.image_data)
+        )
         move_action = menu.addAction("Move to Folder")
-        move_action.triggered.connect(lambda: self.move_requested.emit(self.image_data))
+        move_action.triggered.connect(
+            lambda: self.move_requested.emit(self.image_data)
+        )
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
-        delete_action.triggered.connect(lambda: self.delete_requested.emit(self.image_data["id"]))
+        delete_action.triggered.connect(
+            lambda: self.delete_requested.emit(self.image_data["id"])
+        )
         menu.exec_(pos)
 
 
@@ -464,25 +515,48 @@ class _ShortcutButton(QPushButton):
 
     _IGNORED_KEYS = {
         Qt.Key_unknown,
-        Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta,
-        Qt.Key_Tab, Qt.Key_Backtab,
+        Qt.Key_Control,
+        Qt.Key_Shift,
+        Qt.Key_Alt,
+        Qt.Key_Meta,
+        Qt.Key_Tab,
+        Qt.Key_Backtab,
         Qt.Key_Escape,
     }
 
-    def __init__(self, text="Change…", parent=None):
+    def __init__(self, text="Change\u2026", parent=None):
         super().__init__(text, parent)
         self._waiting = False
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
-        self.setStyleSheet(styles.shortcut_button())
+        self._apply_style()
         self.clicked.connect(self._on_clicked)
+        theme.theme_changed.connect(self._apply_style)
+
+    def _apply_style(self, _mode=None):
+        c = theme.c
+        self.setStyleSheet(f"""
+            QPushButton {{
+                padding: {SPACE['sm']}px {SPACE['md']}px;
+                background-color: {c['primary']};
+                color: white;
+                border: none;
+                border-radius: {SPACE['xs']}px;
+                font-size: {FONT['label']['size']}px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{ background-color: {c['primary_dark']}; }}
+            QPushButton[waiting="true"] {{
+                background-color: {c['error']};
+            }}
+        """)
 
     def _on_clicked(self):
         self._waiting = True
         self.setProperty("waiting", True)
         self.style().unpolish(self)
         self.style().polish(self)
-        self.setText("Press a key…")
+        self.setText("Press a key\u2026")
         self.setFocus()
 
     def keyPressEvent(self, event):
@@ -496,7 +570,7 @@ class _ShortcutButton(QPushButton):
         self.setProperty("waiting", False)
         self.style().unpolish(self)
         self.style().polish(self)
-        self.setText("Change…")
+        self.setText("Change\u2026")
         self.clearFocus()
         self.shortcut_captured.emit(key)
 
@@ -506,7 +580,7 @@ class _ShortcutButton(QPushButton):
             self.setProperty("waiting", False)
             self.style().unpolish(self)
             self.style().polish(self)
-            self.setText("Change…")
+            self.setText("Change\u2026")
         super().focusOutEvent(event)
 
 
@@ -564,41 +638,41 @@ class DashboardWindow(QWidget):
         self.sidebar.setFixedWidth(240)
 
         sidebar_layout = QVBoxLayout(self.sidebar)
-        sidebar_layout.setContentsMargins(16, 16, 16, 16)
-        sidebar_layout.setSpacing(8)
+        sidebar_layout.setContentsMargins(SPACE["md"], SPACE["md"], SPACE["md"], SPACE["md"])
+        sidebar_layout.setSpacing(SPACE["sm"])
 
         # App title
         self.title_label = QLabel("SnipShot")
         sidebar_layout.addWidget(self.title_label)
 
-        sidebar_layout.addSpacing(16)
+        sidebar_layout.addSpacing(SPACE["md"])
 
         # Snip button
-        self.snip_btn = QPushButton("✂️  New Snip")
+        self.snip_btn = QPushButton("New Snip")
         self.snip_btn.setCursor(Qt.PointingHandCursor)
         self.snip_btn.clicked.connect(self._on_snip)
         sidebar_layout.addWidget(self.snip_btn)
 
         # Upload button
-        self.upload_btn = QPushButton("📂  Upload Image")
+        self.upload_btn = QPushButton("Upload Image")
         self.upload_btn.setCursor(Qt.PointingHandCursor)
         self.upload_btn.clicked.connect(self._on_upload)
         sidebar_layout.addWidget(self.upload_btn)
 
-        sidebar_layout.addSpacing(16)
+        sidebar_layout.addSpacing(SPACE["md"])
 
         # Navigation
-        self.nav_all = QPushButton("📁  All Files")
+        self.nav_all = QPushButton("All Files")
         self.nav_all.setCursor(Qt.PointingHandCursor)
         self.nav_all.clicked.connect(self._on_nav_all)
         sidebar_layout.addWidget(self.nav_all)
 
-        self.nav_recent = QPushButton("🕐  Recent")
+        self.nav_recent = QPushButton("Recent")
         self.nav_recent.setCursor(Qt.PointingHandCursor)
         self.nav_recent.clicked.connect(self._on_nav_recent)
         sidebar_layout.addWidget(self.nav_recent)
 
-        self.nav_settings = QPushButton("⚙️  Settings")
+        self.nav_settings = QPushButton("Settings")
         self.nav_settings.setCursor(Qt.PointingHandCursor)
         self.nav_settings.clicked.connect(self._on_nav_settings)
         sidebar_layout.addWidget(self.nav_settings)
@@ -607,9 +681,11 @@ class DashboardWindow(QWidget):
 
         # User section
         user_frame = QFrame()
-        user_frame.setStyleSheet("background-color: transparent; padding-top: 16px;")
+        user_frame.setStyleSheet(
+            f"background-color: transparent; padding-top: {SPACE['md']}px;"
+        )
         user_layout = QVBoxLayout(user_frame)
-        user_layout.setContentsMargins(0, 16, 0, 0)
+        user_layout.setContentsMargins(0, SPACE["md"], 0, 0)
 
         self.user_label = QLabel("Loading...")
         user_layout.addWidget(self.user_label)
@@ -636,19 +712,18 @@ class DashboardWindow(QWidget):
         self.header.setFixedHeight(64)
 
         header_layout = QHBoxLayout(self.header)
-        header_layout.setContentsMargins(24, 0, 24, 0)
+        header_layout.setContentsMargins(SPACE["lg"], 0, SPACE["lg"], 0)
 
         self.header_title = QLabel("My Files")
         header_layout.addWidget(self.header_title)
 
         header_layout.addStretch()
 
-        self.new_folder_btn = QPushButton("+ New Folder")
-        self.new_folder_btn.setCursor(Qt.PointingHandCursor)
+        self.new_folder_btn = StyledButton("+ New Folder", variant="ghost")
         self.new_folder_btn.clicked.connect(self._on_new_folder)
         header_layout.addWidget(self.new_folder_btn)
 
-        self.refresh_btn = QPushButton("↻")
+        self.refresh_btn = QPushButton("\u21BB")
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
         self.refresh_btn.clicked.connect(self.refresh)
         header_layout.addWidget(self.refresh_btn)
@@ -661,8 +736,8 @@ class DashboardWindow(QWidget):
 
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(24, 24, 24, 24)
-        self.content_layout.setSpacing(24)
+        self.content_layout.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
+        self.content_layout.setSpacing(SPACE["lg"])
         self.content_layout.setAlignment(Qt.AlignTop)
 
         self.scroll.setWidget(self.content_widget)
@@ -672,7 +747,8 @@ class DashboardWindow(QWidget):
         self.loading_label = QLabel("Loading...")
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setStyleSheet(
-            f"color: {c['text_secondary']}; font-size: 14px; padding: 40px;"
+            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
+            f"padding: {SPACE['xxl']}px;"
         )
         self.content_layout.addWidget(self.loading_label)
 
@@ -691,18 +767,22 @@ class DashboardWindow(QWidget):
                 border-right: 1px solid {c['border']};
             }}
         """)
-        self.title_label.setStyleSheet(f"""
-            font-size: 24px; font-weight: 700; color: {c['primary']};
-            padding: 8px 0; background-color: transparent;
-        """)
+        self.title_label.setStyleSheet(
+            f"font-size: {SPACE['lg']}px; font-weight: {FONT['display']['weight']}; "
+            f"color: {c['primary']}; padding: {SPACE['sm']}px 0; background-color: transparent;"
+        )
         self.snip_btn.setStyleSheet(styles.sidebar_action_button())
         self.upload_btn.setStyleSheet(styles.sidebar_action_button())
         self._set_active_nav(self.active_nav)
-        self.user_label.setStyleSheet(f"color: {c['text_secondary']}; font-size: 12px; background-color: transparent;")
+        self.user_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['caption']['size']}px; "
+            "background-color: transparent;"
+        )
         self.logout_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent; color: {c['error']};
-                border: none; padding: 8px 0; font-size: 13px; text-align: left;
+                border: none; padding: {SPACE['sm']}px 0;
+                font-size: {FONT['label']['size']}px; text-align: left;
             }}
             QPushButton:hover {{ text-decoration: underline; }}
         """)
@@ -713,16 +793,21 @@ class DashboardWindow(QWidget):
                 border-bottom: 1px solid {c['border']};
             }}
         """)
-        self.header_title.setStyleSheet(f"font-size: 18px; font-weight: 500; color: {c['text']}; background-color: transparent;")
-        self.new_folder_btn.setStyleSheet(styles.new_folder_button())
+        self.header_title.setStyleSheet(
+            f"font-size: {FONT['heading']['size']}px; font-weight: 500; "
+            f"color: {c['text']}; background-color: transparent;"
+        )
         self.refresh_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent; border: none;
-                font-size: 18px; padding: 8px; border-radius: 4px; color: {c['text_secondary']};
+                font-size: {FONT['heading']['size']}px; padding: {SPACE['sm']}px;
+                border-radius: {SPACE['xs']}px; color: {c['text_secondary']};
             }}
             QPushButton:hover {{ background-color: {c['hover']}; }}
         """)
-        self.scroll.setStyleSheet(f"QScrollArea {{ border: none; background-color: {c['bg']}; }}")
+        self.scroll.setStyleSheet(
+            f"QScrollArea {{ border: none; background-color: {c['bg']}; }}"
+        )
 
     def _on_theme_changed(self, _mode=None):
         """Handle live theme change."""
@@ -743,7 +828,7 @@ class DashboardWindow(QWidget):
     def load_user_info(self):
         if api_client.user:
             email = api_client.user.get("email", "Unknown")
-            self.user_label.setText(f"👤 {email}")
+            self.user_label.setText(f"\U0001F464 {email}")
 
     def refresh(self):
         if self.active_nav == "settings":
@@ -772,6 +857,7 @@ class DashboardWindow(QWidget):
 
         class LoadWorker(QThread):
             finished = pyqtSignal(dict, dict)
+
             def run(self):
                 folders_result = api_client.get_folders()
                 images_result = api_client.get_images(folder_id=0, per_page=20)
@@ -780,7 +866,10 @@ class DashboardWindow(QWidget):
         self._clear_content()
 
         loading = QLabel("Loading folders...")
-        loading.setStyleSheet(f"color: {theme.c['text_secondary']}; padding: 20px; background-color: transparent;")
+        loading.setStyleSheet(
+            f"color: {theme.c['text_secondary']}; padding: {SPACE['lg']}px; "
+            "background-color: transparent;"
+        )
         self.content_layout.addWidget(loading)
 
         self.load_worker = LoadWorker()
@@ -796,12 +885,13 @@ class DashboardWindow(QWidget):
             if folders:
                 folders_label = QLabel("Folders")
                 folders_label.setStyleSheet(
-                    f"font-size: 14px; font-weight: 500; color: {c['text_secondary']}; background-color: transparent;"
+                    f"font-size: {FONT['body']['size']}px; font-weight: 500; "
+                    f"color: {c['text_secondary']}; background-color: transparent;"
                 )
                 self.content_layout.addWidget(folders_label)
 
                 folder_grid = QWidget()
-                folder_grid_layout = FlowLayout(folder_grid, spacing=16)
+                folder_grid_layout = FlowLayout(folder_grid, spacing=SPACE["md"])
                 for folder in folders:
                     card = FolderCard(folder)
                     card.clicked.connect(self._on_folder_clicked)
@@ -813,16 +903,21 @@ class DashboardWindow(QWidget):
             if images_result["success"]:
                 images = images_result["data"].get("images", [])
                 if images:
-                    self.content_layout.addSpacing(16)
+                    self.content_layout.addSpacing(SPACE["md"])
                     images_label = QLabel("Unfiled Images")
                     images_label.setStyleSheet(
-                        f"font-size: 14px; font-weight: 500; color: {c['text_secondary']}; background-color: transparent;"
+                        f"font-size: {FONT['body']['size']}px; font-weight: 500; "
+                        f"color: {c['text_secondary']}; background-color: transparent;"
                     )
                     self.content_layout.addWidget(images_label)
                     self._add_image_grid(images)
 
-            if not folders and not (images_result.get("success") and images_result["data"].get("images")):
-                self._show_empty_state("No files yet", "Capture a screenshot to get started!")
+            if not folders and not (
+                images_result.get("success") and images_result["data"].get("images")
+            ):
+                self._show_empty_state(
+                    "No files yet", "Capture a screenshot to get started!"
+                )
         else:
             self._show_error("Failed to load folders")
 
@@ -833,13 +928,11 @@ class DashboardWindow(QWidget):
         self.current_folder_id = folder_id
         self.current_folder_name = folder_name
         self._set_active_nav("all")
-        self.header_title.setText(f"📁 {folder_name}")
+        self.header_title.setText(f"\U0001F4C1 {folder_name}")
         self.new_folder_btn.setVisible(False)
         self._clear_content()
 
-        back_btn = QPushButton("← Back to My Files")
-        back_btn.setCursor(Qt.PointingHandCursor)
-        back_btn.setStyleSheet(styles.back_button())
+        back_btn = StyledButton("\u2190 Back to My Files", variant="ghost")
         back_btn.clicked.connect(self._on_nav_all)
         self.content_layout.addWidget(back_btn)
 
@@ -851,7 +944,7 @@ class DashboardWindow(QWidget):
             else:
                 self._show_empty_state(
                     "This folder is empty",
-                    "Translated images saved to this folder will appear here."
+                    "Translated images saved to this folder will appear here.",
                 )
         else:
             self._show_error("Failed to load folder")
@@ -862,7 +955,7 @@ class DashboardWindow(QWidget):
         self.all_images = images
 
         self._image_grid_widget = QWidget()
-        grid_layout = FlowLayout(self._image_grid_widget, spacing=16)
+        grid_layout = FlowLayout(self._image_grid_widget, spacing=SPACE["md"])
         for image in display_images:
             card = ImageCard(image)
             card.clicked.connect(self._on_image_clicked)
@@ -873,20 +966,20 @@ class DashboardWindow(QWidget):
         self.content_layout.addWidget(self._image_grid_widget)
 
         if len(images) > 20 or show_load_more:
-            self.load_more_btn = QPushButton("Load More Images")
-            self.load_more_btn.setCursor(Qt.PointingHandCursor)
-            self.load_more_btn.setStyleSheet(styles.load_more_button())
+            self.load_more_btn = StyledButton("Load More Images", variant="primary")
             self.load_more_btn.clicked.connect(self._load_more_images)
-            self.content_layout.addWidget(self.load_more_btn, alignment=Qt.AlignCenter)
+            self.content_layout.addWidget(
+                self.load_more_btn, alignment=Qt.AlignCenter
+            )
 
     def _load_more_images(self):
-        if not (hasattr(self, 'all_images') and hasattr(self, 'load_more_btn')):
+        if not (hasattr(self, "all_images") and hasattr(self, "load_more_btn")):
             return
         self.content_layout.removeWidget(self.load_more_btn)
         self.load_more_btn.deleteLater()
 
         remaining_images = self.all_images[20:]
-        if remaining_images and hasattr(self, '_image_grid_widget'):
+        if remaining_images and hasattr(self, "_image_grid_widget"):
             layout = self._image_grid_widget.layout()
             if layout:
                 for image in remaining_images:
@@ -902,28 +995,39 @@ class DashboardWindow(QWidget):
         empty_frame = QFrame()
         empty_layout = QVBoxLayout(empty_frame)
         empty_layout.setAlignment(Qt.AlignCenter)
-        empty_layout.setSpacing(8)
+        empty_layout.setSpacing(SPACE["sm"])
 
-        icon_label = QLabel("📂")
-        icon_label.setStyleSheet("font-size: 64px; background-color: transparent;")
+        icon_label = QLabel("\U0001F4C2")
+        icon_label.setStyleSheet(
+            f"font-size: 64px; background-color: transparent;"
+        )
         icon_label.setAlignment(Qt.AlignCenter)
         empty_layout.addWidget(icon_label)
 
         title_label = QLabel(title)
-        title_label.setStyleSheet(f"font-size: 18px; font-weight: 500; color: {c['text']}; background-color: transparent;")
+        title_label.setStyleSheet(
+            f"font-size: {FONT['heading']['size']}px; font-weight: 500; "
+            f"color: {c['text']}; background-color: transparent;"
+        )
         title_label.setAlignment(Qt.AlignCenter)
         empty_layout.addWidget(title_label)
 
         subtitle_label = QLabel(subtitle)
-        subtitle_label.setStyleSheet(f"font-size: 14px; color: {c['text_secondary']}; background-color: transparent;")
+        subtitle_label.setStyleSheet(
+            f"font-size: {FONT['body']['size']}px; color: {c['text_secondary']}; "
+            "background-color: transparent;"
+        )
         subtitle_label.setAlignment(Qt.AlignCenter)
         empty_layout.addWidget(subtitle_label)
 
         self.content_layout.addWidget(empty_frame)
 
     def _show_error(self, message: str):
-        error_label = QLabel(f"❌ {message}")
-        error_label.setStyleSheet(f"color: {theme.c['error']}; padding: 20px; background-color: transparent;")
+        error_label = QLabel(f"\u274C {message}")
+        error_label.setStyleSheet(
+            f"color: {theme.c['error']}; padding: {SPACE['lg']}px; "
+            "background-color: transparent;"
+        )
         self.content_layout.addWidget(error_label)
 
     # ========== Event Handlers ==========
@@ -933,9 +1037,12 @@ class DashboardWindow(QWidget):
 
     def _on_upload(self):
         from PyQt5.QtWidgets import QFileDialog
+
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Image", "",
-            "Images (*.png *.jpg *.jpeg *.webp *.bmp)"
+            self,
+            "Select Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
         )
         if file_path:
             self.upload_requested.emit(file_path)
@@ -957,7 +1064,9 @@ class DashboardWindow(QWidget):
             if images:
                 self._add_image_grid(images)
             else:
-                self._show_empty_state("No recent files", "Your recent translations will appear here.")
+                self._show_empty_state(
+                    "No recent files", "Your recent translations will appear here."
+                )
         else:
             self._show_error("Failed to load recent files")
         self.content_layout.addStretch()
@@ -984,16 +1093,20 @@ class DashboardWindow(QWidget):
             QFrame {{
                 background-color: {c['surface']};
                 border: 1px solid {c['border']};
-                border-radius: 8px;
+                border-radius: {SPACE['sm']}px;
             }}
         """)
+        apply_card_shadow(settings_card)
 
         sl = QVBoxLayout(settings_card)
-        sl.setContentsMargins(24, 24, 24, 24)
-        sl.setSpacing(10)
+        sl.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
+        sl.setSpacing(SPACE["sm"])
 
         page_title = QLabel("Settings")
-        page_title.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {c['text']}; background-color: transparent;")
+        page_title.setStyleSheet(
+            f"font-size: {FONT['heading']['size']}px; font-weight: {FONT['heading']['weight']}; "
+            f"color: {c['text']}; background-color: transparent;"
+        )
         sl.addWidget(page_title)
 
         # ================================================================
@@ -1010,15 +1123,15 @@ class DashboardWindow(QWidget):
         sl.addWidget(theme_desc)
 
         toggle_row = QHBoxLayout()
-        toggle_row.setSpacing(8)
+        toggle_row.setSpacing(SPACE["sm"])
 
-        self.light_btn = QPushButton("☀  Light")
+        self.light_btn = QPushButton("Light")
         self.light_btn.setCursor(Qt.PointingHandCursor)
         self.light_btn.setStyleSheet(styles.theme_toggle_button(not theme.is_dark))
         self.light_btn.clicked.connect(lambda: theme.set_mode("light"))
         toggle_row.addWidget(self.light_btn)
 
-        self.dark_btn = QPushButton("🌙  Dark")
+        self.dark_btn = QPushButton("Dark")
         self.dark_btn.setCursor(Qt.PointingHandCursor)
         self.dark_btn.setStyleSheet(styles.theme_toggle_button(theme.is_dark))
         self.dark_btn.clicked.connect(lambda: theme.set_mode("dark"))
@@ -1030,7 +1143,7 @@ class DashboardWindow(QWidget):
         # ================================================================
         # SECTION: Capture Shortcut
         # ================================================================
-        sl.addSpacing(8)
+        sl.addSpacing(SPACE["sm"])
         sec_capture = QLabel("Capture Shortcut")
         sec_capture.setStyleSheet(self._section_title_style())
         sl.addWidget(sec_capture)
@@ -1044,15 +1157,15 @@ class DashboardWindow(QWidget):
         sl.addWidget(sc_desc)
 
         sc_row = QHBoxLayout()
-        sc_row.setSpacing(12)
+        sc_row.setSpacing(SPACE["md"])
 
         self.shortcut_display = QLabel(self._key_name(self.snip_shortcut_key))
         self.shortcut_display.setStyleSheet(f"""
             QLabel {{
-                padding: 8px 14px;
+                padding: {SPACE['sm']}px {SPACE['md']}px;
                 border: 1px solid {c['border']};
-                border-radius: 4px;
-                font-size: 13px;
+                border-radius: {SPACE['xs']}px;
+                font-size: {FONT['label']['size']}px;
                 font-weight: 500;
                 background: {c['surface_alt']};
                 color: {c['text']};
@@ -1062,7 +1175,7 @@ class DashboardWindow(QWidget):
         """)
         sc_row.addWidget(self.shortcut_display)
 
-        self.shortcut_btn = _ShortcutButton("Change…")
+        self.shortcut_btn = _ShortcutButton("Change\u2026")
         self.shortcut_btn.shortcut_captured.connect(self._on_shortcut_captured)
         sc_row.addWidget(self.shortcut_btn)
         sc_row.addStretch()
@@ -1071,13 +1184,15 @@ class DashboardWindow(QWidget):
         # ================================================================
         # SECTION: Translation Language
         # ================================================================
-        sl.addSpacing(8)
+        sl.addSpacing(SPACE["sm"])
         sec_lang = QLabel("Translation Language")
         sec_lang.setStyleSheet(self._section_title_style())
         sl.addWidget(sec_lang)
         self._add_section_separator(sl)
 
-        lang_desc = QLabel("Default target language applied to every new snip or upload.")
+        lang_desc = QLabel(
+            "Default target language applied to every new snip or upload."
+        )
         lang_desc.setWordWrap(True)
         lang_desc.setStyleSheet(self._settings_hint_style())
         sl.addWidget(lang_desc)
@@ -1099,7 +1214,7 @@ class DashboardWindow(QWidget):
         # ================================================================
         # SECTION: Translation Parameters
         # ================================================================
-        sl.addSpacing(8)
+        sl.addSpacing(SPACE["sm"])
         sec_trans = QLabel("Translation Parameters")
         sec_trans.setStyleSheet(self._section_title_style())
         sl.addWidget(sec_trans)
@@ -1127,10 +1242,12 @@ class DashboardWindow(QWidget):
         self.detection_size_spin.valueChanged.connect(self._on_detection_size_changed)
         sl.addWidget(self.detection_size_spin)
 
-        sl.addWidget(QLabel(
-            "Resolution used for text detection  (512 – 3072 px, step 64).",
-            styleSheet=self._settings_hint_style()
-        ))
+        sl.addWidget(
+            QLabel(
+                "Resolution used for text detection  (512 \u2013 3072 px, step 64).",
+                styleSheet=self._settings_hint_style(),
+            )
+        )
 
         # Box threshold
         box_label = QLabel("Box Threshold")
@@ -1146,10 +1263,12 @@ class DashboardWindow(QWidget):
         self.box_threshold_spin.valueChanged.connect(self._on_box_threshold_changed)
         sl.addWidget(self.box_threshold_spin)
 
-        sl.addWidget(QLabel(
-            "Minimum confidence for a detected region to be translated  (0.10 – 1.00).",
-            styleSheet=self._settings_hint_style()
-        ))
+        sl.addWidget(
+            QLabel(
+                "Minimum confidence for a detected region to be translated  (0.10 \u2013 1.00).",
+                styleSheet=self._settings_hint_style(),
+            )
+        )
 
         # Inpainting size
         inp_label = QLabel("Inpainting Size")
@@ -1161,13 +1280,17 @@ class DashboardWindow(QWidget):
         self.inpainting_size_spin.setSingleStep(INPAINTING_SIZE_STEP)
         self.inpainting_size_spin.setValue(self.inpainting_size)
         self.inpainting_size_spin.setStyleSheet(self._settings_input_style())
-        self.inpainting_size_spin.valueChanged.connect(self._on_inpainting_size_changed)
+        self.inpainting_size_spin.valueChanged.connect(
+            self._on_inpainting_size_changed
+        )
         sl.addWidget(self.inpainting_size_spin)
 
-        sl.addWidget(QLabel(
-            "Resolution used for background inpainting  (512 – 4096 px, step 256).",
-            styleSheet=self._settings_hint_style()
-        ))
+        sl.addWidget(
+            QLabel(
+                "Resolution used for background inpainting  (512 \u2013 4096 px, step 256).",
+                styleSheet=self._settings_hint_style(),
+            )
+        )
 
         # Inpainter backend
         inp_type_label = QLabel("Inpainter")
@@ -1192,20 +1315,32 @@ class DashboardWindow(QWidget):
 
     def _settings_label_style(self):
         c = theme.c
-        return f"font-weight: 500; color: {c['text']}; margin-top: 4px; background-color: transparent;"
+        return (
+            f"font-weight: 500; color: {c['text']}; "
+            f"margin-top: {SPACE['xs']}px; background-color: transparent;"
+        )
 
     def _settings_hint_style(self):
         c = theme.c
-        return f"color: {c['text_secondary']}; font-size: 12px; background-color: transparent;"
+        return (
+            f"color: {c['text_secondary']}; font-size: {FONT['caption']['size']}px; "
+            "background-color: transparent;"
+        )
 
     def _section_title_style(self):
         c = theme.c
-        return f"font-size: 14px; font-weight: 600; color: {c['text_secondary']}; margin-top: 12px; background-color: transparent;"
+        return (
+            f"font-size: {FONT['body']['size']}px; font-weight: {FONT['label']['weight']}; "
+            f"color: {c['text_secondary']}; margin-top: {SPACE['md']}px; "
+            "background-color: transparent;"
+        )
 
     def _add_section_separator(self, layout):
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"color: {theme.c['border']}; background-color: {theme.c['border']};")
+        sep.setStyleSheet(
+            f"color: {theme.c['border']}; background-color: {theme.c['border']};"
+        )
         layout.addWidget(sep)
 
     # ── Settings change handlers ───────────────────────────────────────
@@ -1276,15 +1411,23 @@ class DashboardWindow(QWidget):
                 if result["success"]:
                     self.refresh()
                 else:
-                    QMessageBox.warning(self, "Error", result.get("error", "Failed to create folder"))
+                    QMessageBox.warning(
+                        self,
+                        "Error",
+                        result.get("error", "Failed to create folder"),
+                    )
 
     def _on_delete_folder(self, folder_id: int, folder_name: str):
         msg = QMessageBox(self)
         msg.setWindowTitle("Delete Folder")
         msg.setText(f"Delete folder '{folder_name}'?")
         msg.setInformativeText("Choose how to handle the images inside.")
-        keep_btn = msg.addButton("Delete Folder (Keep Images)", QMessageBox.AcceptRole)
-        delete_all_btn = msg.addButton("Delete Folder + All Images", QMessageBox.DestructiveRole)
+        keep_btn = msg.addButton(
+            "Delete Folder (Keep Images)", QMessageBox.AcceptRole
+        )
+        delete_all_btn = msg.addButton(
+            "Delete Folder + All Images", QMessageBox.DestructiveRole
+        )
         msg.addButton("Cancel", QMessageBox.RejectRole)
         msg.exec_()
 
@@ -1310,13 +1453,16 @@ class DashboardWindow(QWidget):
             if result["success"]:
                 self.refresh()
             else:
-                QMessageBox.warning(self, "Error", result.get("error", "Failed to rename folder"))
+                QMessageBox.warning(
+                    self, "Error", result.get("error", "Failed to rename folder")
+                )
 
     def _on_delete_image(self, image_id: int):
         reply = QMessageBox.question(
-            self, "Delete Image",
+            self,
+            "Delete Image",
             "Delete this image permanently?",
-            QMessageBox.Yes | QMessageBox.No
+            QMessageBox.Yes | QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
             result = api_client.delete_image(image_id)
@@ -1331,11 +1477,15 @@ class DashboardWindow(QWidget):
             self, "Rename Image", "New filename:", text=current_name
         )
         if ok and new_name.strip() and new_name.strip() != current_name:
-            result = api_client.update_image(image_data["id"], filename=new_name.strip())
+            result = api_client.update_image(
+                image_data["id"], filename=new_name.strip()
+            )
             if result["success"]:
                 self.refresh()
             else:
-                QMessageBox.warning(self, "Error", result.get("error", "Failed to rename image"))
+                QMessageBox.warning(
+                    self, "Error", result.get("error", "Failed to rename image")
+                )
 
     def _on_move_image(self, image_data: dict):
         folders_result = api_client.get_folders()
@@ -1349,15 +1499,19 @@ class DashboardWindow(QWidget):
 
         if len(folder_names) == 1:
             QMessageBox.information(
-                self, "No Folders",
-                "Create a folder first to move images into it."
+                self,
+                "No Folders",
+                "Create a folder first to move images into it.",
             )
             return
 
         choice, ok = QInputDialog.getItem(
-            self, "Move to Folder",
+            self,
+            "Move to Folder",
             f"Move '{image_data.get('filename', 'image')}' to:",
-            folder_names, 0, False
+            folder_names,
+            0,
+            False,
         )
         if ok and choice:
             idx = folder_names.index(choice)
@@ -1366,7 +1520,9 @@ class DashboardWindow(QWidget):
             if result["success"]:
                 self.refresh()
             else:
-                QMessageBox.warning(self, "Error", result.get("error", "Failed to move image"))
+                QMessageBox.warning(
+                    self, "Error", result.get("error", "Failed to move image")
+                )
 
     def _on_logout(self):
         api_client.logout()

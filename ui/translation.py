@@ -1,3 +1,15 @@
+# CHANGELOG
+# ─────────────────────────────────────────────────────────────────────
+# - Replaced QProgressBar indeterminate with SnipShotSpinner
+# - save_frame pre-added with setFixedHeight(0), animated via
+#   QPropertyAnimation on maximumHeight (0 → natural, 300 ms OutCubic)
+# - Preview frame: rounded corners (border-radius 12px via pixmap mask),
+#   subtle 1px inner border
+# - Replaced QComboBox folder selector with FolderSelector widget
+# - Replaced dialog_cancel / dialog_primary buttons with StyledButton
+# - All spacing uses SPACE constants; all font sizes use FONT constants
+# ─────────────────────────────────────────────────────────────────────
+
 """
 SnipShot Desktop - Translation Window
 
@@ -7,30 +19,35 @@ Shows translation progress and result, allows saving to folder.
 import copy
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QFrame, QProgressBar, QComboBox, QMessageBox, QDialog
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QFrame, QProgressBar, QComboBox, QMessageBox, QDialog,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QBuffer, QIODevice
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtCore import (
+    Qt, pyqtSignal, QThread, QBuffer, QIODevice,
+    QPropertyAnimation, QEasingCurve,
+)
+from PyQt5.QtGui import QPixmap, QPainterPath, QRegion, QBitmap, QPainter, QColor
 
 from api import api_client
 from config import DEFAULT_TRANSLATION_CONFIG
 from .theme import theme
 from . import styles
+from .styles import SPACE, FONT, apply_card_shadow
+from .components import StyledButton, SnipShotSpinner, FolderSelector
 
 
 class TranslationWorker(QThread):
     """Background worker for translation"""
-    
+
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
-    
+
     def __init__(self, image_bytes: bytes, target_language: str = "ENG", translation_config: dict = None):
         super().__init__()
         self.image_bytes = image_bytes
         self.target_language = target_language
         self.translation_config = translation_config
-    
+
     def run(self):
         try:
             config = copy.deepcopy(
@@ -51,31 +68,31 @@ class TranslationWorker(QThread):
 
 class SaveWorker(QThread):
     """Background worker for saving to database"""
-    
+
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
-    
+
     def __init__(
         self,
         image_url: str,
         filename: str,
         folder_id: int = None,
-        target_language: str = "ENG"
+        target_language: str = "ENG",
     ):
         super().__init__()
         self.image_url = image_url
         self.filename = filename
         self.folder_id = folder_id
         self.target_language = target_language
-    
+
     def run(self):
         try:
             result = api_client.save_image_from_url(
-                self.image_url, 
-                self.filename, 
+                self.image_url,
+                self.filename,
                 self.folder_id,
                 source_language="JPN",
-                target_language=self.target_language
+                target_language=self.target_language,
             )
             if result["success"]:
                 self.finished.emit(result["data"])
@@ -90,202 +107,281 @@ class TranslationWindow(QDialog):
     Window shown during/after translation.
     Displays progress, result, and save options.
     """
-    
+
     saved = pyqtSignal()
-    
-    def __init__(self, captured_pixmap: QPixmap, parent=None, target_language: str = "ENG", translation_config: dict = None):
+
+    def __init__(
+        self,
+        captured_pixmap: QPixmap,
+        parent=None,
+        target_language: str = "ENG",
+        translation_config: dict = None,
+    ):
         super().__init__(parent)
         self.setWindowTitle("SnipShot - Translate")
         self.setMinimumSize(500, 400)
         self.setModal(True)
-        
+
         self.captured_pixmap = captured_pixmap
         self.target_language = target_language
         self.translation_config = translation_config
         self.translated_url = None
         self.folders = []
-        
+
         self._setup_ui()
         self._load_folders()
         self._start_translation()
-    
+
     def _setup_ui(self):
+        c = theme.c
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-        
+        layout.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
+        layout.setSpacing(SPACE["md"])
+
         # Title
-        title = QLabel("Translating Image...")
-        title.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.c['text']};")
-        layout.addWidget(title)
-        self.title_label = title
-        
-        # Preview
-        preview_frame = QFrame()
-        preview_frame.setStyleSheet(f"background-color: {theme.c['surface_alt']}; border-radius: 8px;")
-        preview_frame.setFixedHeight(200)
-        
-        preview_layout = QVBoxLayout(preview_frame)
+        self.title_label = QLabel("Translating Image...")
+        self.title_label.setStyleSheet(
+            f"font-size: {FONT['heading']['size']}px; font-weight: {FONT['heading']['weight']}; "
+            f"color: {c['text']}; background-color: transparent;"
+        )
+        layout.addWidget(self.title_label)
+
+        # Preview with rounded corners and inner border
+        self.preview_frame = QFrame()
+        self.preview_frame.setStyleSheet(
+            f"background-color: {c['surface_alt']}; "
+            f"border-radius: {SPACE['md']}px; "
+            f"border: 1px solid {c['border']};"
+        )
+        self.preview_frame.setFixedHeight(200)
+
+        preview_layout = QVBoxLayout(self.preview_frame)
         preview_layout.setAlignment(Qt.AlignCenter)
-        
-        # Show scaled preview
+
         self.preview_label = QLabel()
         scaled = self.captured_pixmap.scaled(
             300, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
-        self.preview_label.setPixmap(scaled)
+        # Create rounded pixmap
+        rounded = self._round_pixmap(scaled, SPACE["md"])
+        self.preview_label.setPixmap(rounded)
         self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setStyleSheet("background-color: transparent;")
         preview_layout.addWidget(self.preview_label)
-        
-        layout.addWidget(preview_frame)
-        
-        # Progress bar
+
+        layout.addWidget(self.preview_frame)
+
+        # Spinner (replaces indeterminate progress bar)
+        spinner_row = QHBoxLayout()
+        spinner_row.setAlignment(Qt.AlignCenter)
+        self.spinner = SnipShotSpinner(40)
+        spinner_row.addWidget(self.spinner)
+        layout.addLayout(spinner_row)
+
+        # Completion progress bar (hidden until done)
         self.progress = QProgressBar()
-        self.progress.setRange(0, 0)  # Indeterminate
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
         self.progress.setStyleSheet(styles.progress_bar_lg())
+        self.progress.setVisible(False)
         layout.addWidget(self.progress)
-        
+
         # Status label
         self.status_label = QLabel(
             f"Sending to translator ({self.target_language})... This may take 1-2 minutes."
         )
-        self.status_label.setStyleSheet(f"color: {theme.c['text_secondary']}; font-size: 13px;")
+        self.status_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
+            "background-color: transparent;"
+        )
         self.status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_label)
-        
-        # Save options (hidden initially)
+
+        # Save options — pre-added, height=0 (animated open later)
         self.save_frame = QFrame()
-        self.save_frame.setVisible(False)
+        self.save_frame.setMaximumHeight(0)
+        self.save_frame.setStyleSheet("background-color: transparent; border: none;")
+
         save_layout = QVBoxLayout(self.save_frame)
-        save_layout.setContentsMargins(0, 16, 0, 0)
-        save_layout.setSpacing(12)
-        
-        # Folder selector
+        save_layout.setContentsMargins(0, SPACE["md"], 0, 0)
+        save_layout.setSpacing(SPACE["sm"])
+
         folder_label = QLabel("Save to folder:")
-        folder_label.setStyleSheet(f"font-weight: 500; color: {theme.c['text']};")
+        folder_label.setStyleSheet(
+            f"font-weight: 500; color: {c['text']}; background-color: transparent;"
+        )
         save_layout.addWidget(folder_label)
-        
-        self.folder_combo = QComboBox()
-        self.folder_combo.setStyleSheet(styles.folder_combo())
-        self.folder_combo.addItem("Unfiled", 0)
-        save_layout.addWidget(self.folder_combo)
-        
+
+        self.folder_selector = FolderSelector()
+        self.folder_selector.addItem("Unfiled", 0)
+        save_layout.addWidget(self.folder_selector)
+
         layout.addWidget(self.save_frame)
-        
+
         layout.addStretch()
-        
+
         # Buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-        
-        self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setStyleSheet(styles.dialog_cancel())
+
+        self.cancel_btn = StyledButton("Cancel", variant="secondary")
         self.cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(self.cancel_btn)
-        
-        self.save_btn = QPushButton("Save to Account")
-        self.save_btn.setStyleSheet(styles.dialog_primary())
+
+        self.save_btn = StyledButton("Save to Account", variant="primary")
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._on_save)
         button_layout.addWidget(self.save_btn)
-        
+
         layout.addLayout(button_layout)
-    
+
+    # ── Helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _round_pixmap(pixmap: QPixmap, radius: int) -> QPixmap:
+        """Return a copy of *pixmap* with rounded corners."""
+        rounded = QPixmap(pixmap.size())
+        rounded.fill(Qt.transparent)
+        painter = QPainter(rounded)
+        painter.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(0, 0, pixmap.width(), pixmap.height(), radius, radius)
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, pixmap)
+        painter.end()
+        return rounded
+
+    def _animate_save_frame(self):
+        """Slide-open the save_frame from height 0 → natural height."""
+        self.save_frame.adjustSize()
+        target_h = self.save_frame.sizeHint().height()
+        anim = QPropertyAnimation(self.save_frame, b"maximumHeight")
+        anim.setDuration(300)
+        anim.setStartValue(0)
+        anim.setEndValue(target_h + SPACE["md"])
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._save_anim = anim  # prevent GC
+        anim.start()
+
     def _load_folders(self):
-        """Load user's folders"""
+        """Load user's folders."""
         try:
             result = api_client.get_folders()
             if result["success"]:
                 self.folders = result["data"].get("folders", [])
                 for folder in self.folders:
-                    self.folder_combo.addItem(f"📁 {folder['name']}", folder["id"])
-        except:
+                    self.folder_selector.addItem(
+                        f"\U0001F4C1 {folder['name']}", folder["id"]
+                    )
+        except Exception:
             pass
-    
+
     def _start_translation(self):
-        """Start the translation process"""
-        # Convert pixmap to bytes
+        """Start the translation process."""
         buffer = QBuffer()
         buffer.open(QIODevice.WriteOnly)
         self.captured_pixmap.save(buffer, "PNG")
         image_bytes = bytes(buffer.data())
-        
-        # Start worker thread
-        self.worker = TranslationWorker(image_bytes, self.target_language, self.translation_config)
+
+        self.worker = TranslationWorker(
+            image_bytes, self.target_language, self.translation_config
+        )
         self.worker.finished.connect(self._on_translation_complete)
         self.worker.error.connect(self._on_translation_error)
         self.worker.start()
-    
+
     def _on_translation_complete(self, data: dict):
-        """Handle translation completion"""
+        """Handle translation completion."""
         self.translated_url = data.get("image_url")
-        
-        self.title_label.setText("✓ Translation Complete!")
-        self.title_label.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.c['success']};")
-        
-        self.progress.setRange(0, 100)
+        c = theme.c
+
+        self.title_label.setText("Translation Complete!")
+        self.title_label.setStyleSheet(
+            f"font-size: {FONT['heading']['size']}px; font-weight: {FONT['heading']['weight']}; "
+            f"color: {c['success']}; background-color: transparent;"
+        )
+
+        self.spinner.stop()
+        self.spinner.hide()
+
+        self.progress.setVisible(True)
         self.progress.setValue(100)
         self.progress.setStyleSheet(styles.progress_bar_success())
-        
+
         self.status_label.setText(
             f"Translation successful ({self.target_language})! Choose a folder to save."
         )
-        
-        self.save_frame.setVisible(True)
+
+        self._animate_save_frame()
         self.save_btn.setEnabled(True)
         self.cancel_btn.setText("Close")
-    
+
     def _on_translation_error(self, error: str):
-        """Handle translation error"""
-        self.title_label.setText("✗ Translation Failed")
-        self.title_label.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.c['error']};")
-        
+        """Handle translation error."""
+        c = theme.c
+        self.title_label.setText("Translation Failed")
+        self.title_label.setStyleSheet(
+            f"font-size: {FONT['heading']['size']}px; font-weight: {FONT['heading']['weight']}; "
+            f"color: {c['error']}; background-color: transparent;"
+        )
+
+        self.spinner.stop()
+        self.spinner.hide()
         self.progress.setVisible(False)
+
         self.status_label.setText(f"Error: {error}")
-        self.status_label.setStyleSheet(f"color: {theme.c['error']}; font-size: 13px;")
-        
+        self.status_label.setStyleSheet(
+            f"color: {c['error']}; font-size: {FONT['label']['size']}px; "
+            "background-color: transparent;"
+        )
+
         self.cancel_btn.setText("Close")
-    
+
     def _on_save(self):
-        """Save translated image to account"""
+        """Save translated image to account."""
         if not self.translated_url:
             return
-        
-        folder_id = self.folder_combo.currentData()
+
+        folder_id = self.folder_selector.currentData()
         if folder_id == 0:
             folder_id = None
-        
-        # Generate filename
-        import time
-        filename = f"translated_{int(time.time())}.png"
-        
+
+        import time as _time
+
+        filename = f"translated_{int(_time.time())}.png"
+
         self.save_btn.setEnabled(False)
         self.save_btn.setText("Saving...")
-        
+
         self.save_worker = SaveWorker(
             self.translated_url,
             filename,
             folder_id,
-            target_language=self.target_language
+            target_language=self.target_language,
         )
         self.save_worker.finished.connect(self._on_save_complete)
         self.save_worker.error.connect(self._on_save_error)
         self.save_worker.start()
-    
+
     def _on_save_complete(self, data: dict):
-        """Handle save completion"""
-        self.status_label.setText("✓ Saved to your account!")
-        self.status_label.setStyleSheet(f"color: {theme.c['success']}; font-size: 13px; font-weight: 500;")
-        
+        """Handle save completion."""
+        c = theme.c
+        self.status_label.setText("Saved to your account!")
+        self.status_label.setStyleSheet(
+            f"color: {c['success']}; font-size: {FONT['label']['size']}px; "
+            f"font-weight: 500; background-color: transparent;"
+        )
+
         self.save_btn.setText("Saved!")
         self.saved.emit()
-        
-        # Close after short delay
+
         from PyQt5.QtCore import QTimer
+
         QTimer.singleShot(1500, self.accept)
-    
+
     def _on_save_error(self, error: str):
-        """Handle save error"""
+        """Handle save error."""
         QMessageBox.warning(self, "Error", f"Failed to save: {error}")
         self.save_btn.setEnabled(True)
         self.save_btn.setText("Save to Account")

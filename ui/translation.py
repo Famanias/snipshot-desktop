@@ -4,6 +4,8 @@ SnipShot Desktop - Translation Window
 Shows translation progress and result, allows saving to folder.
 """
 
+import copy
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QFrame, QProgressBar, QComboBox, QMessageBox, QDialog
@@ -12,6 +14,7 @@ from PyQt5.QtCore import Qt, pyqtSignal, QThread, QBuffer, QIODevice
 from PyQt5.QtGui import QPixmap
 
 from api import api_client
+from config import DEFAULT_TRANSLATION_CONFIG
 
 
 class TranslationWorker(QThread):
@@ -20,13 +23,22 @@ class TranslationWorker(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     
-    def __init__(self, image_bytes: bytes):
+    def __init__(self, image_bytes: bytes, target_language: str = "ENG", translation_config: dict = None):
         super().__init__()
         self.image_bytes = image_bytes
+        self.target_language = target_language
+        self.translation_config = translation_config
     
     def run(self):
         try:
-            result = api_client.translate_image(self.image_bytes)
+            config = copy.deepcopy(
+                self.translation_config if self.translation_config is not None
+                else DEFAULT_TRANSLATION_CONFIG
+            )
+            config.setdefault("translator", {})
+            config["translator"]["target_lang"] = self.target_language
+
+            result = api_client.translate_image(self.image_bytes, config=config)
             if result["success"]:
                 self.finished.emit(result["data"])
             else:
@@ -41,11 +53,18 @@ class SaveWorker(QThread):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
     
-    def __init__(self, image_url: str, filename: str, folder_id: int = None):
+    def __init__(
+        self,
+        image_url: str,
+        filename: str,
+        folder_id: int = None,
+        target_language: str = "ENG"
+    ):
         super().__init__()
         self.image_url = image_url
         self.filename = filename
         self.folder_id = folder_id
+        self.target_language = target_language
     
     def run(self):
         try:
@@ -54,7 +73,7 @@ class SaveWorker(QThread):
                 self.filename, 
                 self.folder_id,
                 source_language="JPN",
-                target_language="ENG"
+                target_language=self.target_language
             )
             if result["success"]:
                 self.finished.emit(result["data"])
@@ -72,13 +91,15 @@ class TranslationWindow(QDialog):
     
     saved = pyqtSignal()
     
-    def __init__(self, captured_pixmap: QPixmap, parent=None):
+    def __init__(self, captured_pixmap: QPixmap, parent=None, target_language: str = "ENG", translation_config: dict = None):
         super().__init__(parent)
         self.setWindowTitle("SnipShot - Translate")
         self.setMinimumSize(500, 400)
         self.setModal(True)
         
         self.captured_pixmap = captured_pixmap
+        self.target_language = target_language
+        self.translation_config = translation_config
         self.translated_url = None
         self.folders = []
         
@@ -137,7 +158,9 @@ class TranslationWindow(QDialog):
         layout.addWidget(self.progress)
         
         # Status label
-        self.status_label = QLabel("Sending to translator... This may take 1-2 minutes.")
+        self.status_label = QLabel(
+            f"Sending to translator ({self.target_language})... This may take 1-2 minutes."
+        )
         self.status_label.setStyleSheet("color: #5F6368; font-size: 13px;")
         self.status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_label)
@@ -234,7 +257,7 @@ class TranslationWindow(QDialog):
         image_bytes = bytes(buffer.data())
         
         # Start worker thread
-        self.worker = TranslationWorker(image_bytes)
+        self.worker = TranslationWorker(image_bytes, self.target_language, self.translation_config)
         self.worker.finished.connect(self._on_translation_complete)
         self.worker.error.connect(self._on_translation_error)
         self.worker.start()
@@ -261,7 +284,9 @@ class TranslationWindow(QDialog):
             }
         """)
         
-        self.status_label.setText("Translation successful! Choose a folder to save.")
+        self.status_label.setText(
+            f"Translation successful ({self.target_language})! Choose a folder to save."
+        )
         
         self.save_frame.setVisible(True)
         self.save_btn.setEnabled(True)
@@ -294,7 +319,12 @@ class TranslationWindow(QDialog):
         self.save_btn.setEnabled(False)
         self.save_btn.setText("Saving...")
         
-        self.save_worker = SaveWorker(self.translated_url, filename, folder_id)
+        self.save_worker = SaveWorker(
+            self.translated_url,
+            filename,
+            folder_id,
+            target_language=self.target_language
+        )
         self.save_worker.finished.connect(self._on_save_complete)
         self.save_worker.error.connect(self._on_save_error)
         self.save_worker.start()

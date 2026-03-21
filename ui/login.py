@@ -26,6 +26,7 @@ class LoginWindow(QWidget):
     
     login_success = pyqtSignal()
     show_register = pyqtSignal()
+    local_mode_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -212,7 +213,39 @@ class LoginWindow(QWidget):
         register_layout.addWidget(self.register_btn)
         
         container_layout.addLayout(register_layout)
-        
+
+        container_layout.addSpacing(12)
+
+        # Local mode button
+        self.local_mode_btn = QPushButton("\U0001F4BB  Use Local Mode")
+        self.local_mode_btn.setCursor(Qt.PointingHandCursor)
+        self.local_mode_btn.setMinimumHeight(44)
+        self.local_mode_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F1F3F4;
+                color: #3C4043;
+                border: 1px solid #DADCE0;
+                border-radius: 6px;
+                padding: 12px 24px;
+                font-size: 14px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #E8EAED;
+                border-color: #BDC1C6;
+            }
+            QPushButton:pressed {
+                background-color: #DFE1E5;
+            }
+        """)
+        self.local_mode_btn.clicked.connect(self._on_local_mode)
+        container_layout.addWidget(self.local_mode_btn)
+
+        local_hint = QLabel("Save files locally without an account")
+        local_hint.setAlignment(Qt.AlignCenter)
+        local_hint.setStyleSheet("color: #80868B; font-size: 11px;")
+        container_layout.addWidget(local_hint)
+
         layout.addWidget(container)
     
     def _on_login(self):
@@ -249,7 +282,11 @@ class LoginWindow(QWidget):
     def _on_show_register(self):
         """Switch to register screen"""
         self.show_register.emit()
-    
+
+    def _on_local_mode(self):
+        """Switch to local mode"""
+        self.local_mode_requested.emit()
+
     def clear_fields(self):
         """Clear all input fields"""
         self.email_input.clear()

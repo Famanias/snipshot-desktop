@@ -5,23 +5,101 @@ Main dashboard with folder/image management (Google Drive-style).
 """
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QGridLayout, QMenu, QAction,
     QInputDialog, QMessageBox, QSizePolicy, QListWidget,
     QListWidgetItem, QStackedWidget, QProgressBar, QDialog,
-    QLineEdit, QTextEdit, QDialogButtonBox, QApplication
+    QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox,
+    QLayout, QSpinBox, QDoubleSpinBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread
-from PyQt5.QtGui import QIcon, QPixmap, QCursor, QFont
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread, QRect, QPoint
+from PyQt5.QtGui import QIcon, QPixmap, QCursor, QFont, QKeySequence
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from PyQt5.QtCore import QUrl
 
 from api import api_client
+from config import (
+    TRANSLATION_TARGET_LANG, TRANSLATION_INPAINTER,
+    DEFAULT_SHORTCUT_KEY,
+    DETECTION_SIZE_MIN, DETECTION_SIZE_MAX, DETECTION_SIZE_STEP,
+    BOX_THRESHOLD_MIN, BOX_THRESHOLD_MAX,
+    INPAINTING_SIZE_MIN, INPAINTING_SIZE_MAX, INPAINTING_SIZE_STEP,
+)
 from utils import format_file_size, format_date
 
 
+class FlowLayout(QLayout):
+    """A layout that wraps child widgets to the next row when available space runs out."""
+
+    def __init__(self, parent=None, spacing=16):
+        super().__init__(parent)
+        self._spacing = spacing
+        self._items = []
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items[index]
+        return None
+
+    def takeAt(self, index):
+        if 0 <= index < len(self._items):
+            return self._items.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientations(Qt.Orientation(0))
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._do_layout(QRect(0, 0, width, 0), test_only=True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._do_layout(rect, test_only=False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        m = self.contentsMargins()
+        size += QSize(m.left() + m.right(), m.top() + m.bottom())
+        return size
+
+    def _do_layout(self, rect, test_only):
+        m = self.contentsMargins()
+        x = rect.x() + m.left()
+        y = rect.y() + m.top()
+        line_height = 0
+        right_edge = rect.right() - m.right()
+
+        for item in self._items:
+            w = item.sizeHint().width()
+            h = item.sizeHint().height()
+            if x + w > right_edge and line_height > 0:
+                x = rect.x() + m.left()
+                y += line_height + self._spacing
+                line_height = 0
+            if not test_only:
+                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+            x += w + self._spacing
+            line_height = max(line_height, h)
+
+        return y + line_height - rect.y() + m.bottom()
+
+
 class ImageLoaderWorker(QThread):
-    """Background worker for loading images from URL"""
+    """Background worker for loading images from URL or local file"""
 
     finished = pyqtSignal(bytes)
     error = pyqtSignal(str)
@@ -32,8 +110,14 @@ class ImageLoaderWorker(QThread):
 
     def run(self):
         try:
+            import os
+            # Local file path — read directly from disk
+            if os.path.isfile(self.url):
+                with open(self.url, "rb") as f:
+                    self.finished.emit(f.read())
+                return
+            # Remote URL — fetch over HTTP
             import httpx
-            # Use httpx for better async HTTP handling
             with httpx.Client(timeout=15.0, follow_redirects=True) as client:
                 response = client.get(self.url)
                 response.raise_for_status()
@@ -199,11 +283,15 @@ class ImagePreviewDialog(QDialog):
         self.image_label.setStyleSheet("color: #EA4335; padding: 20px;")
     
     def _open_in_browser(self):
-        """Open image URL in browser"""
+        """Open image URL in browser or local file viewer"""
+        import os
         import webbrowser
         url = self.image_data.get("public_url")
         if url:
-            webbrowser.open(url)
+            if os.path.isfile(url):
+                os.startfile(url)
+            else:
+                webbrowser.open(url)
     
     def resizeEvent(self, event):
         """Re-scale image when dialog is resized"""
@@ -369,7 +457,8 @@ class FolderCard(QFrame):
         layout.addWidget(name_label)
         
         # Image count
-        count_label = QLabel(f"{self.image_count} images")
+        image_label = "image" if self.image_count == 1 else "images"
+        count_label = QLabel(f"{self.image_count} {image_label}")
         count_label.setStyleSheet("color: #5F6368; font-size: 12px;")
         count_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(count_label)
@@ -402,6 +491,8 @@ class ImageCard(QFrame):
     
     clicked = pyqtSignal(dict)
     delete_requested = pyqtSignal(int)
+    rename_requested = pyqtSignal(dict)
+    move_requested = pyqtSignal(dict)
     
     def __init__(self, image_data: dict, parent=None):
         super().__init__(parent)
@@ -470,6 +561,12 @@ class ImageCard(QFrame):
         
         open_action = menu.addAction("View")
         open_action.triggered.connect(lambda: self.clicked.emit(self.image_data))
+
+        rename_action = menu.addAction("Rename")
+        rename_action.triggered.connect(lambda: self.rename_requested.emit(self.image_data))
+
+        move_action = menu.addAction("Move to Folder")
+        move_action.triggered.connect(lambda: self.move_requested.emit(self.image_data))
         
         menu.addSeparator()
         
@@ -477,6 +574,81 @@ class ImageCard(QFrame):
         delete_action.triggered.connect(lambda: self.delete_requested.emit(self.image_data["id"]))
         
         menu.exec_(pos)
+
+
+class _ShortcutButton(QPushButton):
+    """
+    A button that, when clicked, waits for the user to press a key and emits
+    ``shortcut_captured(int)`` with the Qt key code.
+    """
+
+    shortcut_captured = pyqtSignal(int)
+
+    # Keys that should not be accepted as shortcuts
+    _IGNORED_KEYS = {
+        Qt.Key_unknown,
+        Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta,
+        Qt.Key_Tab, Qt.Key_Backtab,
+        Qt.Key_Escape,
+    }
+
+    def __init__(self, text="Change…", parent=None):
+        super().__init__(text, parent)
+        self._waiting = False
+        self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setStyleSheet("""
+            QPushButton {
+                padding: 8px 16px;
+                background-color: #4285F4;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QPushButton:hover { background-color: #3367D6; }
+            QPushButton[waiting="true"] {
+                background-color: #EA4335;
+            }
+        """)
+        self.clicked.connect(self._on_clicked)
+
+    def _on_clicked(self):
+        self._waiting = True
+        self.setProperty("waiting", True)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.setText("Press a key…")
+        self.setFocus()
+
+    def keyPressEvent(self, event):
+        if not self._waiting:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        if key in self._IGNORED_KEYS or key == 0:
+            # Keep waiting — modifiers / unknown keys are not valid shortcuts
+            return
+
+        self._waiting = False
+        self.setProperty("waiting", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.setText("Change…")
+        self.clearFocus()
+        self.shortcut_captured.emit(key)
+
+    def focusOutEvent(self, event):
+        """Cancel capture if focus is lost."""
+        if self._waiting:
+            self._waiting = False
+            self.setProperty("waiting", False)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.setText("Change…")
+        super().focusOutEvent(event)
 
 
 class DashboardWindow(QWidget):
@@ -491,6 +663,8 @@ class DashboardWindow(QWidget):
     
     logout_requested = pyqtSignal()
     capture_requested = pyqtSignal()
+    upload_requested = pyqtSignal(str)  # emits file path
+    shortcut_changed = pyqtSignal(int)  # emits new Qt key code
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -500,6 +674,26 @@ class DashboardWindow(QWidget):
         
         self.current_folder_id = None
         self.current_folder_name = None
+        self.active_nav = "all"
+        self.target_language = TRANSLATION_TARGET_LANG
+        self.snip_shortcut_key = DEFAULT_SHORTCUT_KEY
+        self.detection_size = 1536
+        self.box_threshold = 0.7
+        self.inpainting_size = 2048
+        self.inpainter = TRANSLATION_INPAINTER
+        self.language_options = [
+            ("English", "ENG"),
+            ("Japanese", "JPN"),
+            ("Korean", "KOR"),
+            ("Chinese (Simplified)", "CHS"),
+            ("Chinese (Traditional)", "CHT"),
+            # ("Spanish", "ESP"),
+            # ("French", "FRA"),
+            # ("German", "DEU"),
+            # ("Italian", "ITA"),
+            # ("Portuguese", "POR"),
+            # ("Russian", "RUS"),
+        ]
         
         self._setup_ui()
         
@@ -553,6 +747,24 @@ class DashboardWindow(QWidget):
         """)
         self.snip_btn.clicked.connect(self._on_snip)
         sidebar_layout.addWidget(self.snip_btn)
+
+        # Upload image button
+        self.upload_btn = QPushButton("📂  Upload Image")
+        self.upload_btn.setCursor(Qt.PointingHandCursor)
+        self.upload_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FFFFFF;
+                color: #202124;
+                border: 1px solid #DADCE0;
+                border-radius: 24px;
+                padding: 12px 20px;
+                font-size: 14px;
+                font-weight: 500;
+                text-align: left;
+            }
+        """)
+        self.upload_btn.clicked.connect(self._on_upload)
+        sidebar_layout.addWidget(self.upload_btn)
         
         sidebar_layout.addSpacing(16)
         
@@ -568,6 +780,12 @@ class DashboardWindow(QWidget):
         self.nav_recent.setStyleSheet(self._nav_button_style(False))
         self.nav_recent.clicked.connect(self._on_nav_recent)
         sidebar_layout.addWidget(self.nav_recent)
+
+        self.nav_settings = QPushButton("⚙️  Settings")
+        self.nav_settings.setCursor(Qt.PointingHandCursor)
+        self.nav_settings.setStyleSheet(self._nav_button_style(False))
+        self.nav_settings.clicked.connect(self._on_nav_settings)
+        sidebar_layout.addWidget(self.nav_settings)
         
         sidebar_layout.addStretch()
         
@@ -720,6 +938,13 @@ class DashboardWindow(QWidget):
                     text-align: left;
                 }
             """
+
+    def _set_active_nav(self, active: str):
+        """Update sidebar active state styling."""
+        self.active_nav = active
+        self.nav_all.setStyleSheet(self._nav_button_style(active == "all"))
+        self.nav_recent.setStyleSheet(self._nav_button_style(active == "recent"))
+        self.nav_settings.setStyleSheet(self._nav_button_style(active == "settings"))
     
     def load_user_info(self):
         """Load and display user info"""
@@ -729,6 +954,14 @@ class DashboardWindow(QWidget):
     
     def refresh(self):
         """Refresh current view"""
+        if self.active_nav == "settings":
+            self._on_nav_settings()
+            return
+
+        if self.active_nav == "recent":
+            self._on_nav_recent()
+            return
+
         if self.current_folder_id:
             self._load_folder(self.current_folder_id, self.current_folder_name)
         else:
@@ -743,6 +976,12 @@ class DashboardWindow(QWidget):
     
     def _load_all_files_async(self):
         """Load folders and unfiled images asynchronously"""
+        self.current_folder_id = None
+        self.current_folder_name = None
+        self.header_title.setText("My Files")
+        self.new_folder_btn.setVisible(True)
+        self._set_active_nav("all")
+
         from PyQt5.QtCore import QThread, pyqtSignal
 
         class LoadWorker(QThread):
@@ -779,20 +1018,15 @@ class DashboardWindow(QWidget):
                 self.content_layout.addWidget(folders_label)
 
                 # Folder grid
-                folder_grid = QFrame()
-                folder_grid_layout = QGridLayout(folder_grid)
-                folder_grid_layout.setSpacing(16)
-                folder_grid_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+                folder_grid = QWidget()
+                folder_grid_layout = FlowLayout(folder_grid, spacing=16)
 
-                for i, folder in enumerate(folders):
+                for folder in folders:
                     card = FolderCard(folder)
                     card.clicked.connect(self._on_folder_clicked)
                     card.delete_requested.connect(self._on_delete_folder)
                     card.rename_requested.connect(self._on_rename_folder)
-
-                    row = i // 5
-                    col = i % 5
-                    folder_grid_layout.addWidget(card, row, col)
+                    folder_grid_layout.addWidget(card)
 
                 self.content_layout.addWidget(folder_grid)
 
@@ -822,6 +1056,7 @@ class DashboardWindow(QWidget):
         """Load images in a specific folder"""
         self.current_folder_id = folder_id
         self.current_folder_name = folder_name
+        self._set_active_nav("all")
         
         # Update header with back button
         self.header_title.setText(f"📁 {folder_name}")
@@ -848,8 +1083,8 @@ class DashboardWindow(QWidget):
         back_btn.clicked.connect(self._on_nav_all)
         self.content_layout.addWidget(back_btn)
         
-        # Load folder contents
-        result = api_client.get_folder(folder_id)
+        # Load folder contents via images endpoint filtered by folder_id
+        result = api_client.get_images(folder_id=folder_id, page=1, per_page=100)
         
         if result["success"]:
             images = result["data"].get("images", [])
@@ -867,26 +1102,22 @@ class DashboardWindow(QWidget):
         self.content_layout.addStretch()
     
     def _add_image_grid(self, images: list, show_load_more: bool = False):
-        """Add a grid of image cards"""
-        image_grid = QFrame()
-        image_grid_layout = QGridLayout(image_grid)
-        image_grid_layout.setSpacing(16)
-        image_grid_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-
-        # Limit initial display to 20 images
+        """Add a responsive flow grid of image cards"""
         display_images = images[:20]
-        self.all_images = images  # Store all images for load more functionality
+        self.all_images = images
 
-        for i, image in enumerate(display_images):
+        self._image_grid_widget = QWidget()
+        grid_layout = FlowLayout(self._image_grid_widget, spacing=16)
+
+        for image in display_images:
             card = ImageCard(image)
             card.clicked.connect(self._on_image_clicked)
             card.delete_requested.connect(self._on_delete_image)
+            card.rename_requested.connect(self._on_rename_image)
+            card.move_requested.connect(self._on_move_image)
+            grid_layout.addWidget(card)
 
-            row = i // 5
-            col = i % 5
-            image_grid_layout.addWidget(card, row, col)
-
-        self.content_layout.addWidget(image_grid)
+        self.content_layout.addWidget(self._image_grid_widget)
 
         # Add "Load More" button if there are more images
         if len(images) > 20 or show_load_more:
@@ -911,33 +1142,22 @@ class DashboardWindow(QWidget):
 
     def _load_more_images(self):
         """Load additional images"""
-        if hasattr(self, 'all_images') and hasattr(self, 'load_more_btn'):
-            # Remove load more button
-            self.content_layout.removeWidget(self.load_more_btn)
-            self.load_more_btn.deleteLater()
+        if not (hasattr(self, 'all_images') and hasattr(self, 'load_more_btn')):
+            return
+        self.content_layout.removeWidget(self.load_more_btn)
+        self.load_more_btn.deleteLater()
 
-            # Add remaining images
-            remaining_images = self.all_images[20:]
-            if remaining_images:
-                # Find existing image grid
-                for i in range(self.content_layout.count()):
-                    item = self.content_layout.itemAt(i)
-                    if item and item.widget():
-                        widget = item.widget()
-                        if hasattr(widget, 'layout'):  # It's the image grid
-                            layout = widget.layout()
-                            if layout:
-                                # Add remaining images to existing grid
-                                start_index = 20
-                                for j, image in enumerate(remaining_images):
-                                    card = ImageCard(image)
-                                    card.clicked.connect(self._on_image_clicked)
-                                    card.delete_requested.connect(self._on_delete_image)
-
-                                    row = (start_index + j) // 5
-                                    col = (start_index + j) % 5
-                                    layout.addWidget(card, row, col)
-                                break
+        remaining_images = self.all_images[20:]
+        if remaining_images and hasattr(self, '_image_grid_widget'):
+            layout = self._image_grid_widget.layout()
+            if layout:
+                for image in remaining_images:
+                    card = ImageCard(image)
+                    card.clicked.connect(self._on_image_clicked)
+                    card.delete_requested.connect(self._on_delete_image)
+                    card.rename_requested.connect(self._on_rename_image)
+                    card.move_requested.connect(self._on_move_image)
+                    layout.addWidget(card)
     
     def _show_empty_state(self, title: str, subtitle: str):
         """Show empty state message"""
@@ -974,6 +1194,18 @@ class DashboardWindow(QWidget):
     def _on_snip(self):
         """Handle snip button click"""
         self.capture_requested.emit()
+
+    def _on_upload(self):
+        """Handle upload button click — open a file picker"""
+        from PyQt5.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp)"
+        )
+        if file_path:
+            self.upload_requested.emit(file_path)
     
     def _on_nav_all(self):
         """Navigate to all files"""
@@ -981,15 +1213,13 @@ class DashboardWindow(QWidget):
     
     def _on_nav_recent(self):
         """Navigate to recent files"""
+        self._set_active_nav("recent")
         self.current_folder_id = None
+        self.current_folder_name = None
         self.header_title.setText("Recent")
         self.new_folder_btn.setVisible(False)
         
         self._clear_content()
-        
-        # Update nav styling
-        self.nav_all.setStyleSheet(self._nav_button_style(False))
-        self.nav_recent.setStyleSheet(self._nav_button_style(True))
         
         # Load all images sorted by date
         result = api_client.get_images()
@@ -1004,6 +1234,305 @@ class DashboardWindow(QWidget):
             self._show_error("Failed to load recent files")
         
         self.content_layout.addStretch()
+
+    def _on_nav_settings(self):
+        """Navigate to settings view."""
+        self._set_active_nav("settings")
+        self.current_folder_id = None
+        self.current_folder_name = None
+        self.header_title.setText("Settings")
+        self.new_folder_btn.setVisible(False)
+
+        self._clear_content()
+        self._render_settings_content()
+        self.content_layout.addStretch()
+
+    # ------------------------------------------------------------------ #
+    # Settings helpers
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _settings_input_style():
+        return """
+            QSpinBox, QDoubleSpinBox, QComboBox {
+                padding: 8px 10px;
+                border: 1px solid #DADCE0;
+                border-radius: 4px;
+                font-size: 13px;
+                min-width: 240px;
+                background: #FFFFFF;
+            }
+            QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {
+                border-color: #4285F4;
+            }
+        """
+
+    @staticmethod
+    def _settings_label_style():
+        return "font-weight: 500; color: #202124; margin-top: 4px;"
+
+    @staticmethod
+    def _settings_hint_style():
+        return "color: #5F6368; font-size: 12px;"
+
+    @staticmethod
+    def _section_title_style():
+        return "font-size: 14px; font-weight: 600; color: #3C4043; margin-top: 12px;"
+
+    def _add_section_separator(self, layout):
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #DADCE0;")
+        layout.addWidget(sep)
+
+    # ------------------------------------------------------------------ #
+    # Settings rendering
+    # ------------------------------------------------------------------ #
+
+    def _render_settings_content(self):
+        """Render settings controls in content area."""
+        settings_card = QFrame()
+        settings_card.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border: 1px solid #DADCE0;
+                border-radius: 8px;
+            }
+        """)
+
+        sl = QVBoxLayout(settings_card)
+        sl.setContentsMargins(24, 24, 24, 24)
+        sl.setSpacing(10)
+
+        # ── Page title ──────────────────────────────────────────────────
+        page_title = QLabel("Settings")
+        page_title.setStyleSheet("font-size: 18px; font-weight: 600; color: #202124;")
+        sl.addWidget(page_title)
+
+        # ================================================================
+        # SECTION: Capture Shortcut
+        # ================================================================
+        sec_capture = QLabel("Capture Shortcut")
+        sec_capture.setStyleSheet(self._section_title_style())
+        sl.addWidget(sec_capture)
+
+        self._add_section_separator(sl)
+
+        sc_desc = QLabel(
+            "Keyboard shortcut that triggers a new screen snip from anywhere in the app."
+        )
+        sc_desc.setWordWrap(True)
+        sc_desc.setStyleSheet(self._settings_hint_style())
+        sl.addWidget(sc_desc)
+
+        # Current shortcut display + change button
+        sc_row = QHBoxLayout()
+        sc_row.setSpacing(12)
+
+        self.shortcut_display = QLabel(self._key_name(self.snip_shortcut_key))
+        self.shortcut_display.setStyleSheet("""
+            QLabel {
+                padding: 8px 14px;
+                border: 1px solid #DADCE0;
+                border-radius: 4px;
+                font-size: 13px;
+                font-weight: 500;
+                background: #F1F3F4;
+                color: #202124;
+                min-width: 160px;
+            }
+        """)
+        sc_row.addWidget(self.shortcut_display)
+
+        self.shortcut_btn = _ShortcutButton("Change…")
+        self.shortcut_btn.shortcut_captured.connect(self._on_shortcut_captured)
+        sc_row.addWidget(self.shortcut_btn)
+        sc_row.addStretch()
+
+        sl.addLayout(sc_row)
+
+        # ================================================================
+        # SECTION: Translation Language
+        # ================================================================
+        sl.addSpacing(8)
+        sec_lang = QLabel("Translation Language")
+        sec_lang.setStyleSheet(self._section_title_style())
+        sl.addWidget(sec_lang)
+
+        self._add_section_separator(sl)
+
+        lang_desc = QLabel("Default target language applied to every new snip or upload.")
+        lang_desc.setWordWrap(True)
+        lang_desc.setStyleSheet(self._settings_hint_style())
+        sl.addWidget(lang_desc)
+
+        self.language_combo = QComboBox()
+        self.language_combo.setStyleSheet(self._settings_input_style())
+        for label, code in self.language_options:
+            self.language_combo.addItem(f"{label} ({code})", code)
+
+        current_index = self.language_combo.findData(self.target_language)
+        if current_index >= 0:
+            self.language_combo.setCurrentIndex(current_index)
+
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        sl.addWidget(self.language_combo)
+
+        self.language_hint_label = QLabel(f"Current: {self.target_language}")
+        self.language_hint_label.setStyleSheet(self._settings_hint_style())
+        sl.addWidget(self.language_hint_label)
+
+        # ================================================================
+        # SECTION: Translation Parameters
+        # ================================================================
+        sl.addSpacing(8)
+        sec_trans = QLabel("Translation Parameters")
+        sec_trans.setStyleSheet(self._section_title_style())
+        sl.addWidget(sec_trans)
+
+        self._add_section_separator(sl)
+
+        params_desc = QLabel(
+            "Fine-tune the translation engine. Higher detection/inpainting sizes improve quality "
+            "at the cost of speed. Box threshold controls how confidently a region must be detected "
+            "before being translated (higher = fewer false positives)."
+        )
+        params_desc.setWordWrap(True)
+        params_desc.setStyleSheet(self._settings_hint_style())
+        sl.addWidget(params_desc)
+
+        # Detection size
+        det_label = QLabel("Detection Size")
+        det_label.setStyleSheet(self._settings_label_style())
+        sl.addWidget(det_label)
+
+        self.detection_size_spin = QSpinBox()
+        self.detection_size_spin.setRange(DETECTION_SIZE_MIN, DETECTION_SIZE_MAX)
+        self.detection_size_spin.setSingleStep(DETECTION_SIZE_STEP)
+        self.detection_size_spin.setValue(self.detection_size)
+        self.detection_size_spin.setStyleSheet(self._settings_input_style())
+        self.detection_size_spin.valueChanged.connect(self._on_detection_size_changed)
+        sl.addWidget(self.detection_size_spin)
+
+        sl.addWidget(QLabel(
+            "Resolution used for text detection  (512 – 3072 px, step 64).",
+            styleSheet=self._settings_hint_style()
+        ))
+
+        # Box threshold
+        box_label = QLabel("Box Threshold")
+        box_label.setStyleSheet(self._settings_label_style())
+        sl.addWidget(box_label)
+
+        self.box_threshold_spin = QDoubleSpinBox()
+        self.box_threshold_spin.setRange(BOX_THRESHOLD_MIN, BOX_THRESHOLD_MAX)
+        self.box_threshold_spin.setSingleStep(0.05)
+        self.box_threshold_spin.setDecimals(2)
+        self.box_threshold_spin.setValue(self.box_threshold)
+        self.box_threshold_spin.setStyleSheet(self._settings_input_style())
+        self.box_threshold_spin.valueChanged.connect(self._on_box_threshold_changed)
+        sl.addWidget(self.box_threshold_spin)
+
+        sl.addWidget(QLabel(
+            "Minimum confidence for a detected region to be translated  (0.10 – 1.00).",
+            styleSheet=self._settings_hint_style()
+        ))
+
+        # Inpainting size
+        inp_label = QLabel("Inpainting Size")
+        inp_label.setStyleSheet(self._settings_label_style())
+        sl.addWidget(inp_label)
+
+        self.inpainting_size_spin = QSpinBox()
+        self.inpainting_size_spin.setRange(INPAINTING_SIZE_MIN, INPAINTING_SIZE_MAX)
+        self.inpainting_size_spin.setSingleStep(INPAINTING_SIZE_STEP)
+        self.inpainting_size_spin.setValue(self.inpainting_size)
+        self.inpainting_size_spin.setStyleSheet(self._settings_input_style())
+        self.inpainting_size_spin.valueChanged.connect(self._on_inpainting_size_changed)
+        sl.addWidget(self.inpainting_size_spin)
+
+        sl.addWidget(QLabel(
+            "Resolution used for background inpainting  (512 – 4096 px, step 256).",
+            styleSheet=self._settings_hint_style()
+        ))
+
+        # Inpainter backend
+        inp_type_label = QLabel("Inpainter")
+        inp_type_label.setStyleSheet(self._settings_label_style())
+        sl.addWidget(inp_type_label)
+
+        self.inpainter_combo = QComboBox()
+        self.inpainter_combo.setStyleSheet(self._settings_input_style())
+        self.inpainter_combo.addItem("LAMA Large (recommended)", "lama_large")
+        self.inpainter_combo.addItem("None (skip inpainting)", "none")
+        idx = self.inpainter_combo.findData(self.inpainter)
+        if idx >= 0:
+            self.inpainter_combo.setCurrentIndex(idx)
+        self.inpainter_combo.currentIndexChanged.connect(self._on_inpainter_changed)
+        sl.addWidget(self.inpainter_combo)
+
+        self.content_layout.addWidget(settings_card)
+
+    # ------------------------------------------------------------------ #
+    # Settings change handlers
+    # ------------------------------------------------------------------ #
+
+    def _on_language_changed(self):
+        if not hasattr(self, "language_combo"):
+            return
+        selected = self.language_combo.currentData()
+        if selected:
+            self.target_language = selected
+            if hasattr(self, "language_hint_label"):
+                self.language_hint_label.setText(f"Current: {self.target_language}")
+
+    def _on_shortcut_captured(self, key: int):
+        self.snip_shortcut_key = key
+        if hasattr(self, "shortcut_display"):
+            self.shortcut_display.setText(self._key_name(key))
+        self.shortcut_changed.emit(key)
+
+    def _on_detection_size_changed(self, value: int):
+        self.detection_size = value
+
+    def _on_box_threshold_changed(self, value: float):
+        self.box_threshold = round(value, 2)
+
+    def _on_inpainting_size_changed(self, value: int):
+        self.inpainting_size = value
+
+    def _on_inpainter_changed(self):
+        if hasattr(self, "inpainter_combo"):
+            self.inpainter = self.inpainter_combo.currentData()
+
+    # ------------------------------------------------------------------ #
+    # Public getters
+    # ------------------------------------------------------------------ #
+
+    def get_target_language(self) -> str:
+        """Return currently selected target language for new translations."""
+        return self.target_language
+
+    def get_translation_config(self) -> dict:
+        """Return a translation config dict reflecting current settings."""
+        return {
+            "detector": {
+                "detection_size": self.detection_size,
+                "box_threshold": self.box_threshold,
+            },
+            "translator": {"target_lang": self.target_language},
+            "inpainter": {
+                "inpainter": self.inpainter,
+                "inpainting_size": self.inpainting_size,
+            },
+        }
+
+    @staticmethod
+    def _key_name(key: int) -> str:
+        """Return a human-readable name for a Qt key code."""
+        ks = QKeySequence(key)
+        text = ks.toString(QKeySequence.NativeText)
+        return text if text else QKeySequence(key).toString()
     
     def _on_folder_clicked(self, folder_id: int, folder_name: str):
         """Handle folder click"""
@@ -1028,18 +1557,27 @@ class DashboardWindow(QWidget):
     
     def _on_delete_folder(self, folder_id: int, folder_name: str):
         """Delete folder"""
-        reply = QMessageBox.question(
-            self, "Delete Folder",
-            f"Delete folder '{folder_name}'?\n\nImages will be moved to Unfiled.",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            result = api_client.delete_folder(folder_id)
-            if result["success"]:
-                self.refresh()
-            else:
-                QMessageBox.warning(self, "Error", "Failed to delete folder")
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Delete Folder")
+        msg.setText(f"Delete folder '{folder_name}'?")
+        msg.setInformativeText("Choose how to handle the images inside.")
+        keep_btn = msg.addButton("Delete Folder (Keep Images)", QMessageBox.AcceptRole)
+        delete_all_btn = msg.addButton("Delete Folder + All Images", QMessageBox.DestructiveRole)
+        msg.addButton("Cancel", QMessageBox.RejectRole)
+        msg.exec_()
+
+        clicked = msg.clickedButton()
+        if clicked == keep_btn:
+            result = api_client.delete_folder(folder_id, delete_images=False)
+        elif clicked == delete_all_btn:
+            result = api_client.delete_folder(folder_id, delete_images=True)
+        else:
+            return
+
+        if result["success"]:
+            self.refresh()
+        else:
+            QMessageBox.warning(self, "Error", "Failed to delete folder")
     
     def _on_rename_folder(self, folder_id: int, current_name: str):
         """Rename folder"""
@@ -1068,6 +1606,51 @@ class DashboardWindow(QWidget):
                 self.refresh()
             else:
                 QMessageBox.warning(self, "Error", "Failed to delete image")
+
+    def _on_rename_image(self, image_data: dict):
+        """Rename image"""
+        current_name = image_data.get("filename", "")
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Image", "New filename:", text=current_name
+        )
+        if ok and new_name.strip() and new_name.strip() != current_name:
+            result = api_client.update_image(image_data["id"], filename=new_name.strip())
+            if result["success"]:
+                self.refresh()
+            else:
+                QMessageBox.warning(self, "Error", result.get("error", "Failed to rename image"))
+
+    def _on_move_image(self, image_data: dict):
+        """Move image to a different folder"""
+        folders_result = api_client.get_folders()
+        if not folders_result["success"]:
+            QMessageBox.warning(self, "Error", "Failed to load folders")
+            return
+
+        folders = folders_result["data"].get("folders", [])
+        folder_names = ["Unfiled"] + [f["name"] for f in folders]
+        folder_ids = [0] + [f["id"] for f in folders]
+
+        if len(folder_names) == 1:
+            QMessageBox.information(
+                self, "No Folders",
+                "Create a folder first to move images into it."
+            )
+            return
+
+        choice, ok = QInputDialog.getItem(
+            self, "Move to Folder",
+            f"Move '{image_data.get('filename', 'image')}' to:",
+            folder_names, 0, False
+        )
+        if ok and choice:
+            idx = folder_names.index(choice)
+            folder_id = folder_ids[idx]
+            result = api_client.update_image(image_data["id"], folder_id=folder_id)
+            if result["success"]:
+                self.refresh()
+            else:
+                QMessageBox.warning(self, "Error", result.get("error", "Failed to move image"))
     
     def _on_logout(self):
         """Handle logout"""

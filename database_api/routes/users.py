@@ -7,12 +7,16 @@ Frontend should use Supabase client SDK for auth.
 This backend only verifies tokens and provides user profile info.
 """
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
 from config import get_supabase
 from auth import get_current_user_id
 from schemas import UserProfile, AuthResponse, MessageResponse
+
+SITE_URL = os.getenv("SITE_URL", "https://snipshot.space")
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -39,7 +43,8 @@ async def register(request: RegisterRequest):
         supabase = get_supabase()
         response = supabase.auth.sign_up({
             "email": request.email,
-            "password": request.password
+            "password": request.password,
+            "options": {"emailRedirectTo": SITE_URL}
         })
         
         if response.user is None:

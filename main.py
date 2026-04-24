@@ -23,7 +23,8 @@ from PyQt5.QtGui import QIcon, QPixmap
 
 from config import APP_NAME, APP_VERSION, DEFAULT_SHORTCUT_KEY
 from ui import (
-    MAIN_STYLESHEET,
+    theme,
+    get_main_stylesheet,
     LoginWindow,
     RegisterWindow, 
     DashboardWindow,
@@ -32,6 +33,9 @@ from ui import (
 )
 from api import api_client
 from utils import resource_path
+
+_AUTH_WINDOW_SIZE = (1200, 800)
+_DASHBOARD_WINDOW_SIZE = (1200, 800)
 
 # ── Win32 global hotkey support ────────────────────────────────────────────
 _WM_HOTKEY = 0x0312       # Windows WM_HOTKEY message
@@ -92,8 +96,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
-        self.setMinimumSize(1200, 800)
-        self.resize(1200, 800)
+        self.setMinimumSize(*_AUTH_WINDOW_SIZE)
+        self.resize(*_AUTH_WINDOW_SIZE)
         
         # Stacked widget for screen navigation
         self.stack = QStackedWidget()
@@ -102,8 +106,8 @@ class MainWindow(QMainWindow):
         # Create screens
         self._create_screens()
         
-        # Start at login
-        self.stack.setCurrentWidget(self.login_screen)
+        # Start at login with the same auth-screen sizing used after sign out
+        self._show_login()
         
         # Capture widget (created on demand)
         self.capture_widget = None
@@ -140,21 +144,21 @@ class MainWindow(QMainWindow):
         """Show login screen"""
         self.register_screen.clear_fields()
         self.stack.setCurrentWidget(self.login_screen)
-        self.setMinimumSize(900, 600)
-        self.resize(900, 600)
+        self.setMinimumSize(*_AUTH_WINDOW_SIZE)
+        self.resize(*_AUTH_WINDOW_SIZE)
     
     def _show_register(self):
         """Show register screen"""
         self.login_screen.clear_fields()
         self.stack.setCurrentWidget(self.register_screen)
-        self.setMinimumSize(900, 600)
-        self.resize(900, 600)
+        self.setMinimumSize(*_AUTH_WINDOW_SIZE)
+        self.resize(*_AUTH_WINDOW_SIZE)
     
     def _show_dashboard(self):
         """Show main dashboard"""
         self.stack.setCurrentWidget(self.dashboard)
-        self.setMinimumSize(1200, 800)
-        self.resize(1200, 800)
+        self.setMinimumSize(*_DASHBOARD_WINDOW_SIZE)
+        self.resize(*_DASHBOARD_WINDOW_SIZE)
         
         # Load user info and files
         self.dashboard.load_user_info()
@@ -304,7 +308,10 @@ def main():
     app.setApplicationVersion(APP_VERSION)
     
     # Set application style
-    app.setStyleSheet(MAIN_STYLESHEET)
+    app.setStyleSheet(get_main_stylesheet())
+
+    # Re-apply global stylesheet on theme change
+    theme.theme_changed.connect(lambda _: app.setStyleSheet(get_main_stylesheet()))
     
     # Set window icon (if exists)
     icon_path = resource_path("resources/icon.ico")

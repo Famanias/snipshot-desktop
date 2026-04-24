@@ -1,3 +1,16 @@
+# CHANGELOG
+# ─────────────────────────────────────────────────────────────────────
+# - Replaced all addSpacing() values with SPACE constants (base-8 grid)
+# - Replaced primary_button / text_button / local_mode_button with StyledButton
+# - Added app description ("Translate manga …") beneath title
+# - Restructured button hierarchy: Sign In (primary) → divider →
+#   Create account (ghost, own row) → Use Local Mode (secondary, no emoji)
+# - Error label now uses left-border indicator + error_bg background,
+#   pre-allocated with setVisible(False) (no hide/show layout jump)
+# - apply_card_shadow() on auth container
+# - All font/spacing values reference FONT/SPACE constants
+# ─────────────────────────────────────────────────────────────────────
+
 """
 SnipShot Desktop - Login Window
 
@@ -5,265 +18,207 @@ User authentication screen.
 """
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QLineEdit, QPushButton, QFrame, QSpacerItem, 
-    QSizePolicy, QMessageBox
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QLineEdit, QPushButton, QFrame, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QPixmap
 
 from api import api_client
+from .theme import theme
+from . import styles
+from .styles import SPACE, FONT, apply_card_shadow
+from .components import StyledButton
 
 
 class LoginWindow(QWidget):
     """
     Login screen with email/password authentication.
-    
+
     Signals:
         login_success: Emitted when login is successful
         show_register: Emitted when user wants to create account
+        local_mode_requested: Emitted when user wants local-only mode
     """
-    
+
     login_success = pyqtSignal()
     show_register = pyqtSignal()
     local_mode_requested = pyqtSignal()
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("SnipShot - Login")
         self.setMinimumSize(900, 600)
         self._setup_ui()
-    
+        theme.theme_changed.connect(self._apply_styles)
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
-        layout.setContentsMargins(24, 24, 24, 24)
-        
-        # Container card - flexible sizing with max-width
-        container = QFrame()
-        container.setObjectName("authContainer")
-        container.setStyleSheet("""
-            QFrame#authContainer {
-                background-color: #FFFFFF;
-                border: 1px solid #DADCE0;
-                border-radius: 12px;
-            }
-        """)
-        container.setMaximumWidth(450)
-        container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        container_layout = QVBoxLayout(container)
-        container_layout.setContentsMargins(32, 32, 32, 32)
-        container_layout.setSpacing(12)
-        
-        # Logo/Title
-        title = QLabel("SnipShot")
-        title.setObjectName("appTitle")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("""
-            font-size: 32px;
-            font-weight: 700;
-            color: #4285F4;
-            margin-bottom: 10px;
-        """)
-        container_layout.addWidget(title)
-        
+        layout.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
+
+        # Container card
+        self.container = QFrame()
+        self.container.setObjectName("authContainer")
+        self.container.setMaximumWidth(450)
+        self.container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+
+        cl = QVBoxLayout(self.container)
+        cl.setContentsMargins(SPACE["xl"], SPACE["xl"], SPACE["xl"], SPACE["xl"])
+        cl.setSpacing(SPACE["sm"])
+
+        # Logo / Title
+        self.title_label = QLabel("SnipShot")
+        self.title_label.setObjectName("appTitle")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        cl.addWidget(self.title_label)
+
+        # App description
+        self.desc_label = QLabel("Translate manga and text from screenshots instantly")
+        self.desc_label.setAlignment(Qt.AlignCenter)
+        self.desc_label.setWordWrap(True)
+        self.desc_label.setMaximumWidth(320)
+        cl.addWidget(self.desc_label, alignment=Qt.AlignCenter)
+
         # Subtitle
-        subtitle = QLabel("Sign in to your account")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("color: #5F6368; font-size: 14px;")
-        container_layout.addWidget(subtitle)
-        
-        container_layout.addSpacing(20)
-        
+        self.subtitle_label = QLabel("Sign in to your account")
+        self.subtitle_label.setAlignment(Qt.AlignCenter)
+        cl.addWidget(self.subtitle_label)
+
+        cl.addSpacing(SPACE["md"])
+
         # Email field
-        email_label = QLabel("Email")
-        email_label.setStyleSheet("font-weight: 600; font-size: 13px; color: #202124; margin-bottom: 4px;")
-        container_layout.addWidget(email_label)
-        
+        self.email_label = QLabel("Email")
+        cl.addWidget(self.email_label)
+
         self.email_input = QLineEdit()
         self.email_input.setPlaceholderText("Enter your email")
         self.email_input.setMinimumHeight(44)
-        self.email_input.setStyleSheet("""
-            QLineEdit {
-                padding: 12px 16px;
-                border: 1px solid #DADCE0;
-                border-radius: 6px;
-                font-size: 14px;
-                background-color: #FFFFFF;
-            }
-            QLineEdit:focus {
-                border: 2px solid #4285F4;
-                padding: 11px 15px;
-            }
-        """)
-        container_layout.addWidget(self.email_input)
-        
-        container_layout.addSpacing(8)
-        
+        cl.addWidget(self.email_input)
+
+        cl.addSpacing(SPACE["sm"])
+
         # Password field
-        password_label = QLabel("Password")
-        password_label.setStyleSheet("font-weight: 600; font-size: 13px; color: #202124; margin-bottom: 4px;")
-        container_layout.addWidget(password_label)
-        
+        self.password_label = QLabel("Password")
+        cl.addWidget(self.password_label)
+
         self.password_input = QLineEdit()
         self.password_input.setPlaceholderText("Enter your password")
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setMinimumHeight(44)
-        self.password_input.setStyleSheet("""
-            QLineEdit {
-                padding: 12px 16px;
-                border: 1px solid #DADCE0;
-                border-radius: 6px;
-                font-size: 14px;
-                background-color: #FFFFFF;
-            }
-            QLineEdit:focus {
-                border: 2px solid #4285F4;
-                padding: 11px 15px;
-            }
-        """)
         self.password_input.returnPressed.connect(self._on_login)
-        container_layout.addWidget(self.password_input)
-        
-        # Error label (hidden by default)
+        cl.addWidget(self.password_input)
+
+        # Error label — pre-allocated, hidden via setVisible
         self.error_label = QLabel("")
-        self.error_label.setStyleSheet("color: #EA4335; font-size: 12px;")
         self.error_label.setWordWrap(True)
-        self.error_label.hide()
-        container_layout.addWidget(self.error_label)
-        
-        container_layout.addSpacing(10)
-        
-        # Login button
-        self.login_btn = QPushButton("Sign In")
-        self.login_btn.setCursor(Qt.PointingHandCursor)
+        self.error_label.setVisible(False)
+        cl.addWidget(self.error_label)
+
+        cl.addSpacing(SPACE["md"])
+
+        # Sign In button
+        self.login_btn = StyledButton("Sign In", variant="primary")
         self.login_btn.setMinimumHeight(48)
-        self.login_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4285F4;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 14px 24px;
-                font-size: 15px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #3367D6;
-            }
-            QPushButton:pressed {
-                background-color: #2A56C6;
-            }
-            QPushButton:disabled {
-                background-color: #DADCE0;
-            }
-        """)
         self.login_btn.clicked.connect(self._on_login)
-        container_layout.addWidget(self.login_btn)
-        
-        container_layout.addSpacing(20)
-        
+        cl.addWidget(self.login_btn)
+
+        cl.addSpacing(SPACE["md"])
+
         # Divider
         divider_layout = QHBoxLayout()
-        line1 = QFrame()
-        line1.setFrameShape(QFrame.HLine)
-        line1.setStyleSheet("background-color: #DADCE0;")
-        divider_layout.addWidget(line1)
-        
+        self.line1 = QFrame()
+        self.line1.setFrameShape(QFrame.HLine)
+        divider_layout.addWidget(self.line1)
         divider_layout.addStretch()
-        
-        or_label = QLabel("or")
-        or_label.setStyleSheet("color: #5F6368; padding: 0 10px;")
-        divider_layout.addWidget(or_label)
-        
+        self.or_label = QLabel("or")
+        divider_layout.addWidget(self.or_label)
         divider_layout.addStretch()
-        
-        line2 = QFrame()
-        line2.setFrameShape(QFrame.HLine)
-        line2.setStyleSheet("background-color: #DADCE0;")
-        divider_layout.addWidget(line2)
-        
-        container_layout.addLayout(divider_layout)
-        
-        container_layout.addSpacing(10)
-        
-        # Create account link
-        register_layout = QHBoxLayout()
-        register_layout.setAlignment(Qt.AlignCenter)
-        
-        register_text = QLabel("Don't have an account?")
-        register_text.setStyleSheet("color: #5F6368;")
-        register_layout.addWidget(register_text)
-        
-        self.register_btn = QPushButton("Create account")
-        self.register_btn.setCursor(Qt.PointingHandCursor)
-        self.register_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #4285F4;
-                border: none;
-                font-weight: 600;
-                padding: 0;
-            }
-            QPushButton:hover {
-                text-decoration: underline;
-            }
-        """)
+        self.line2 = QFrame()
+        self.line2.setFrameShape(QFrame.HLine)
+        divider_layout.addWidget(self.line2)
+        cl.addLayout(divider_layout)
+
+        cl.addSpacing(SPACE["sm"])
+
+        # Create account — ghost button, own row
+        self.register_btn = StyledButton("Create account", variant="ghost")
         self.register_btn.clicked.connect(self._on_show_register)
-        register_layout.addWidget(self.register_btn)
-        
-        container_layout.addLayout(register_layout)
+        cl.addWidget(self.register_btn)
 
-        container_layout.addSpacing(12)
+        cl.addSpacing(SPACE["sm"])
 
-        # Local mode button
-        self.local_mode_btn = QPushButton("\U0001F4BB  Use Local Mode")
-        self.local_mode_btn.setCursor(Qt.PointingHandCursor)
+        # Local mode button — secondary, no emoji
+        self.local_mode_btn = StyledButton("Use Local Mode", variant="secondary")
         self.local_mode_btn.setMinimumHeight(44)
-        self.local_mode_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #F1F3F4;
-                color: #3C4043;
-                border: 1px solid #DADCE0;
-                border-radius: 6px;
-                padding: 12px 24px;
-                font-size: 14px;
-                font-weight: 500;
-            }
-            QPushButton:hover {
-                background-color: #E8EAED;
-                border-color: #BDC1C6;
-            }
-            QPushButton:pressed {
-                background-color: #DFE1E5;
-            }
-        """)
         self.local_mode_btn.clicked.connect(self._on_local_mode)
-        container_layout.addWidget(self.local_mode_btn)
+        cl.addWidget(self.local_mode_btn)
 
-        local_hint = QLabel("Save files locally without an account")
-        local_hint.setAlignment(Qt.AlignCenter)
-        local_hint.setStyleSheet("color: #80868B; font-size: 11px;")
-        container_layout.addWidget(local_hint)
+        self.local_hint_label = QLabel("Save files locally without an account")
+        self.local_hint_label.setAlignment(Qt.AlignCenter)
+        cl.addWidget(self.local_hint_label)
 
-        layout.addWidget(container)
-    
+        layout.addWidget(self.container)
+
+        apply_card_shadow(self.container)
+        self._apply_styles()
+
+    # ── Theme-aware styling ────────────────────────────────────────────
+    def _apply_styles(self, _mode=None):
+        c = theme.c
+        self.setStyleSheet(f"background-color: {c['bg']};")
+        self.container.setStyleSheet(styles.auth_container())
+        apply_card_shadow(self.container)
+        self.title_label.setStyleSheet(
+            f"font-size: {FONT['display']['size']}px; font-weight: {FONT['display']['weight']}; "
+            f"color: {c['primary']}; background-color: transparent; "
+            f"padding: {SPACE['xs']}px 0 {SPACE['sm']}px 0; min-height: 52px;"
+        )
+        self.desc_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
+            "background-color: transparent;"
+        )
+        self.subtitle_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
+            "background-color: transparent;"
+        )
+        for lbl in (self.email_label, self.password_label):
+            lbl.setStyleSheet(
+                f"font-weight: {FONT['label']['weight']}; font-size: {FONT['label']['size']}px; "
+                f"color: {c['text']}; margin-bottom: {SPACE['xs']}px; background-color: transparent;"
+            )
+        self.email_input.setStyleSheet(styles.input_field())
+        self.password_input.setStyleSheet(styles.input_field())
+        self.error_label.setStyleSheet(
+            f"color: {c['error']}; font-size: {FONT['caption']['size']}px; "
+            f"background-color: {c['error_bg']}; "
+            f"border-left: 3px solid {c['error']}; "
+            f"border-radius: 6px; padding: {SPACE['sm']}px {SPACE['md']}px;"
+        )
+        self.line1.setStyleSheet(f"background-color: {c['border']}; color: {c['border']};")
+        self.line2.setStyleSheet(f"background-color: {c['border']}; color: {c['border']};")
+        self.or_label.setStyleSheet(
+            f"color: {c['text_secondary']}; padding: 0 {SPACE['sm']}px; background-color: transparent;"
+        )
+        self.local_hint_label.setStyleSheet(
+            f"color: {c['text_tertiary']}; font-size: {FONT['hint']['size']}px; "
+            "background-color: transparent;"
+        )
+
+    # ── Actions ────────────────────────────────────────────────────────
     def _on_login(self):
-        """Handle login button click"""
         email = self.email_input.text().strip()
         password = self.password_input.text()
-        
+
         if not email or not password:
             self._show_error("Please enter email and password")
             return
-        
+
         self.login_btn.setEnabled(False)
         self.login_btn.setText("Signing in...")
-        self.error_label.hide()
-        
+        self.error_label.setVisible(False)
+
         try:
             result = api_client.login(email, password)
-            
             if result["success"]:
                 self.login_success.emit()
             else:
@@ -273,22 +228,18 @@ class LoginWindow(QWidget):
         finally:
             self.login_btn.setEnabled(True)
             self.login_btn.setText("Sign In")
-    
+
     def _show_error(self, message: str):
-        """Show error message"""
         self.error_label.setText(message)
-        self.error_label.show()
-    
+        self.error_label.setVisible(True)
+
     def _on_show_register(self):
-        """Switch to register screen"""
         self.show_register.emit()
 
     def _on_local_mode(self):
-        """Switch to local mode"""
         self.local_mode_requested.emit()
 
     def clear_fields(self):
-        """Clear all input fields"""
         self.email_input.clear()
         self.password_input.clear()
-        self.error_label.hide()
+        self.error_label.setVisible(False)

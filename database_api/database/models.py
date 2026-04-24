@@ -7,6 +7,7 @@ We only store image metadata here.
 
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -19,7 +20,7 @@ class Folder(Base):
     __tablename__ = "folders"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String(36), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -38,7 +39,7 @@ class Image(Base):
     __tablename__ = "images"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(String(36), nullable=False, index=True)  # Supabase UUID
+    user_id = Column(UUID(as_uuid=False), nullable=False, index=True)  # Supabase UUID
     folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
     
     # Supabase Storage info

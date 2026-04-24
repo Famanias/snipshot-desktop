@@ -19,11 +19,18 @@ if DATABASE_URL.startswith("postgres://"):
 elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
+# Strip URL query params — asyncpg ignores them; settings go in connect_args instead
+if "?" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.split("?")[0]
+
+_is_postgres = "postgresql" in DATABASE_URL
+
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
     future=True,
-    connect_args={"statement_cache_size": 0} if "postgresql" in DATABASE_URL else {}
+    connect_args={"statement_cache_size": 0} if _is_postgres else {},
+    pool_pre_ping=True,
 )
 
 AsyncSessionLocal = sessionmaker(

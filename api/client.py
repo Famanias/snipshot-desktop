@@ -244,6 +244,47 @@ class APIClient:
                 error = response.json().get("detail", "Failed to save image")
                 return {"success": False, "error": error}
     
+    def save_image_from_bytes(
+        self,
+        image_bytes: bytes,
+        filename: str,
+        folder_id: int = None,
+        source_language: str = None,
+        target_language: str = None
+    ) -> Dict[str, Any]:
+        """Upload translated image bytes directly to user's account."""
+        headers = {}
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+
+        files = {
+            "image": (filename, image_bytes, "image/png"),
+        }
+        data = {}
+        if folder_id is not None:
+            data["folder_id"] = str(folder_id)
+        if source_language:
+            data["source_language"] = source_language
+        if target_language:
+            data["target_language"] = target_language
+
+        with httpx.Client(timeout=60.0) as client:
+            try:
+                response = client.post(
+                    f"{self.base_url}/images/upload",
+                    headers=headers,
+                    files=files,
+                    data=data
+                )
+            except httpx.RequestError as e:
+                return {"success": False, "error": f"Upload failed: {str(e)}"}
+
+            if response.status_code == 201:
+                return {"success": True, "data": response.json()}
+            else:
+                error = response.json().get("detail", "Failed to save image")
+                return {"success": False, "error": error}
+    
     def update_image(self, image_id: int, filename: str = None, folder_id: int = None) -> Dict[str, Any]:
         """Update image (rename or move)"""
         data = {}
@@ -282,11 +323,11 @@ class APIClient:
     def translate_image(self, image_bytes: bytes, config: Dict = None) -> Dict[str, Any]:
         """
         Send image to translator API.
-        Returns the translated image URL from Supabase Storage.
+        Returns the translated image as raw bytes.
         """
         if config is None:
             config = DEFAULT_TRANSLATION_CONFIG
-            
+
         with httpx.Client(timeout=180.0) as client:  # 3 min timeout for translation
             files = {
                 "image": ("snip.png", image_bytes, "image/png"),
@@ -295,7 +336,7 @@ class APIClient:
                 "config": json.dumps(config)
             }
 
-            translate_url = f"{self.translator_url}/translate"
+            translate_url = f"{self.translator_url}/translate/raw"
 
             try:
                 response = client.post(
@@ -308,21 +349,20 @@ class APIClient:
                     "success": False,
                     "error": (
                         f"Could not reach Translator API at {self.translator_url}. "
-                        f"Start snipshot-backend (snipshot_engine.server) or update TRANSLATOR_URL. "
                         f"Details: {str(e)}"
                     )
                 }
 
             if response.status_code == 200:
-                result = response.json()
-                return {"success": True, "data": result}
+                # New backend returns raw image bytes directly
+                return {"success": True, "data": {"image_bytes": response.content}}
 
             if response.status_code == 404:
                 return {
                     "success": False,
                     "error": (
                         f"Translator endpoint not found at {translate_url}. "
-                        "This URL is likely pointing to the Database API instead of snipshot-backend."
+                        "Check that the backend URL is correct."
                     )
                 }
 

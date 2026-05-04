@@ -256,6 +256,47 @@ class LocalAPIClient:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def save_image_from_bytes(
+        self,
+        image_bytes: bytes,
+        filename: str,
+        folder_id: int = None,
+        source_language: str = None,
+        target_language: str = None,
+    ) -> Dict[str, Any]:
+        """Save image bytes directly to local storage."""
+        try:
+            file_path = storage.save_file(image_bytes, filename)
+            file_size = len(image_bytes)
+
+            conn = db.get_connection()
+            try:
+                cur = conn.execute(
+                    """INSERT INTO images
+                       (folder_id, storage_path, public_url, filename,
+                        original_filename, source_language, target_language, file_size)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        folder_id if folder_id else None,
+                        file_path,
+                        file_path,  # public_url = local path
+                        filename,
+                        filename,
+                        source_language or "",
+                        target_language or "",
+                        file_size,
+                    ),
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM images WHERE id = ?", (cur.lastrowid,)
+                ).fetchone()
+                return {"success": True, "data": dict(row)}
+            finally:
+                conn.close()
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     def update_image(
         self, image_id: int, filename: str = None, folder_id: int = None
     ) -> Dict[str, Any]:
@@ -315,7 +356,7 @@ class LocalAPIClient:
         with httpx.Client(timeout=180.0) as client:
             files = {"image": ("snip.png", image_bytes, "image/png")}
             data = {"config": json.dumps(config)}
-            translate_url = f"{self.translator_url}/translate"
+            translate_url = f"{self.translator_url}/translate/raw"
 
             try:
                 response = client.post(translate_url, files=files, data=data)
@@ -324,13 +365,13 @@ class LocalAPIClient:
                     "success": False,
                     "error": (
                         f"Could not reach Translator API at {self.translator_url}. "
-                        f"Start snipshot-backend or update TRANSLATOR_URL. "
                         f"Details: {str(e)}"
                     ),
                 }
 
             if response.status_code == 200:
-                return {"success": True, "data": response.json()}
+                # New backend returns raw image bytes directly
+                return {"success": True, "data": {"image_bytes": response.content}}
 
             if response.status_code == 404:
                 return {

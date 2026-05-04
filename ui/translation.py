@@ -1,3 +1,4 @@
+# translation.py
 # CHANGELOG
 # ─────────────────────────────────────────────────────────────────────
 # - Replaced QProgressBar indeterminate with SnipShotSpinner
@@ -17,6 +18,7 @@ Shows translation progress and result, allows saving to folder.
 """
 
 import copy
+import time
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -74,21 +76,22 @@ class SaveWorker(QThread):
 
     def __init__(
         self,
-        image_url: str,
+        image_bytes: bytes,
         filename: str,
         folder_id: int = None,
         target_language: str = "ENG",
     ):
         super().__init__()
-        self.image_url = image_url
+        self.image_bytes = image_bytes
         self.filename = filename
         self.folder_id = folder_id
         self.target_language = target_language
 
     def run(self):
         try:
-            result = api_client.save_image_from_url(
-                self.image_url,
+            
+            result = api_client.save_image_from_bytes(
+                self.image_bytes,
                 self.filename,
                 self.folder_id,
                 source_language="JPN",
@@ -125,7 +128,7 @@ class TranslationWindow(QDialog):
         self.captured_pixmap = captured_pixmap
         self.target_language = target_language
         self.translation_config = translation_config
-        self.translated_url = None
+        self.translated_bytes = None
         self.folders = []
 
         self._setup_ui()
@@ -293,7 +296,7 @@ class TranslationWindow(QDialog):
 
     def _on_translation_complete(self, data: dict):
         """Handle translation completion."""
-        self.translated_url = data.get("image_url")
+        self.translated_bytes = data.get("image_bytes")
         c = theme.c
 
         self.title_label.setText("Translation Complete!")
@@ -308,6 +311,16 @@ class TranslationWindow(QDialog):
         self.progress.setVisible(True)
         self.progress.setValue(100)
         self.progress.setStyleSheet(styles.progress_bar_success())
+
+        # Update preview with translated image
+        if self.translated_bytes:
+            translated_pixmap = QPixmap()
+            translated_pixmap.loadFromData(self.translated_bytes)
+            scaled = translated_pixmap.scaled(
+                300, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            rounded = self._round_pixmap(scaled, SPACE["md"])
+            self.preview_label.setPixmap(rounded)
 
         self.status_label.setText(
             f"Translation successful ({self.target_language})! Choose a folder to save."
@@ -340,7 +353,7 @@ class TranslationWindow(QDialog):
 
     def _on_save(self):
         """Save translated image to account."""
-        if not self.translated_url:
+        if not self.translated_bytes:
             return
 
         folder_id = self.folder_selector.currentData()
@@ -355,7 +368,7 @@ class TranslationWindow(QDialog):
         self.save_btn.setText("Saving...")
 
         self.save_worker = SaveWorker(
-            self.translated_url,
+            self.translated_bytes,
             filename,
             folder_id,
             target_language=self.target_language,

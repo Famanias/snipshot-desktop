@@ -854,10 +854,23 @@ class DashboardWindow(QWidget):
             self._load_all_files_async()
 
     def _clear_content(self):
+        def clear_layout(layout):
+            if layout is None:
+                return
+            while layout.count():
+                item = layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+                elif item.layout():
+                    clear_layout(item.layout())
+            layout.deleteLater()
+
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+            elif item.layout():
+                clear_layout(item.layout())
 
     def _load_all_files_async(self):
         self.current_folder_id = None
@@ -1047,6 +1060,7 @@ class DashboardWindow(QWidget):
         self.capture_requested.emit()
 
     def _on_upload(self):
+        # pyrefly: ignore [missing-import]
         from PyQt5.QtWidgets import QFileDialog
 
         file_path, _ = QFileDialog.getOpenFileName(
@@ -1098,41 +1112,39 @@ class DashboardWindow(QWidget):
 
     def _make_section_card(self) -> tuple:
         """
-        Returns (card_frame, card_vbox_layout).
-        The card has a primary-coloured left accent border and a drop shadow.
+        Returns a transparent spacer frame + its VBoxLayout (flat, no border).
         """
-        c = theme.c
         card = QFrame()
-        card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['surface']};
-                border: 1px solid {c['border']};
-                border-left: 3px solid {c['primary']};
-                border-radius: {SPACE['sm']}px;
-            }}
-        """)
-        apply_card_shadow(card)
+        card.setStyleSheet("QFrame { background-color: transparent; border: none; }")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(SPACE["lg"], SPACE["md"], SPACE["lg"], SPACE["md"])
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(SPACE["xs"])
         return card, layout
 
     def _section_header_label(self, icon: str, text: str) -> QLabel:
+        """Plain bold section title – no border, no background."""
         c = theme.c
-        label = QLabel(f"{icon}  {text}")
+        label = QLabel(text)
         label.setStyleSheet(
-            f"font-size: {FONT['body']['size']}px; "
+            f"font-size: {FONT['heading']['size']}px; "
             f"font-weight: {FONT['heading']['weight']}; "
             f"color: {c['text']}; "
-            f"background-color: transparent; "
-            f"padding-bottom: {SPACE['xs']}px;"
+            "background-color: transparent; "
+            "border: none;"
         )
         return label
 
     def _hint_label(self, text: str) -> QLabel:
+        """Secondary hint text – no border, no background."""
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setStyleSheet(self._settings_hint_style())
+        c = theme.c
+        label.setStyleSheet(
+            f"color: {c['text_secondary']}; "
+            f"font-size: {FONT['caption']['size']}px; "
+            "background-color: transparent; "
+            "border: none;"
+        )
         return label
 
     def _value_badge(self, text: str) -> QLabel:
@@ -1223,18 +1235,15 @@ class DashboardWindow(QWidget):
             f"font-size: {FONT['display']['size']}px; "
             f"font-weight: {FONT['display']['weight']}; "
             f"color: {c['text']}; "
-            f"background-color: transparent; "
-            f"padding-bottom: {SPACE['sm']}px;"
+            "background-color: transparent; "
+            "border: none;"
         )
         self.content_layout.addWidget(page_title)
+        self.content_layout.addSpacing(SPACE["md"])
 
-        # ══════════════════════════════════════════════════════════════
-        # CARD 1 — Appearance
-        # ══════════════════════════════════════════════════════════════
-        card, sl = self._make_section_card()
-        sl.addWidget(self._section_header_label("🎨", "Appearance"))
-        sl.addWidget(self._hint_label("Choose your preferred colour theme."))
-        sl.addSpacing(SPACE["sm"])
+        # ── Appearance ────────────────────────────────────────────────
+        self.content_layout.addWidget(self._section_header_label("", "Appearance"))
+        self.content_layout.addSpacing(SPACE["sm"])
 
         toggle_row = QHBoxLayout()
         toggle_row.setSpacing(SPACE["sm"])
@@ -1252,23 +1261,24 @@ class DashboardWindow(QWidget):
         toggle_row.addWidget(self.light_btn)
         toggle_row.addWidget(self.dark_btn)
         toggle_row.addStretch()
-        sl.addLayout(toggle_row)
-        self.content_layout.addWidget(card)
+        self.content_layout.addLayout(toggle_row)
+        self.content_layout.addSpacing(SPACE["lg"])
 
-        # ══════════════════════════════════════════════════════════════
-        # CARD 2 — Capture Shortcut
-        # ══════════════════════════════════════════════════════════════
-        card, sl = self._make_section_card()
-        sl.addWidget(self._section_header_label("⌨", "Capture Shortcut"))
-        sl.addWidget(self._hint_label(
-            "Keyboard shortcut that triggers a new screen snip from anywhere in the app."
-        ))
-        sl.addSpacing(SPACE["sm"])
+        # ── Capture Shortcut ──────────────────────────────────────────
+        self.content_layout.addWidget(self._section_header_label("", "Capture Shortcut"))
+        self.content_layout.addSpacing(SPACE["xs"])
+
+        sc_label = QLabel("Keyboard Shortcut")
+        sc_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        self.content_layout.addWidget(sc_label)
+        self.content_layout.addSpacing(SPACE["sm"])
 
         sc_row = QHBoxLayout()
         sc_row.setSpacing(SPACE["sm"])
 
-        # kbd-styled display label
         self.shortcut_display = QLabel(self._key_name(self.snip_shortcut_key))
         self.shortcut_display.setAlignment(Qt.AlignCenter)
         self.shortcut_display.setStyleSheet(f"""
@@ -1280,29 +1290,32 @@ class DashboardWindow(QWidget):
                 font-size: {FONT['label']['size']}px;
                 font-weight: 700;
                 background-color: {c['surface_alt']};
-                color: {c['primary']};
+                color: {c['text']};
                 min-width: 80px;
                 letter-spacing: 1px;
             }}
         """)
         sc_row.addWidget(self.shortcut_display)
 
-        self.shortcut_btn = _ShortcutButton("Change\u2026")
+        self.shortcut_btn = _ShortcutButton("Change Shortcut")
         self.shortcut_btn.shortcut_captured.connect(self._on_shortcut_captured)
         sc_row.addWidget(self.shortcut_btn)
         sc_row.addStretch()
-        sl.addLayout(sc_row)
-        self.content_layout.addWidget(card)
+        self.content_layout.addLayout(sc_row)
+        self.content_layout.addSpacing(SPACE["lg"])
 
-        # ══════════════════════════════════════════════════════════════
-        # CARD 3 — Translation Settings
-        # ══════════════════════════════════════════════════════════════
-        card, sl = self._make_section_card()
-        sl.addWidget(self._section_header_label("🌐", "Translation"))
-        sl.addWidget(self._hint_label(
-            "Default target language applied to every new snip or upload."
-        ))
-        sl.addSpacing(SPACE["sm"])
+        # ── Translation Settings ───────────────────────────────────────
+        self.content_layout.addWidget(self._section_header_label("", "Translation Settings"))
+        self.content_layout.addSpacing(SPACE["sm"])
+
+        lang_label = QLabel("Default Target Language")
+        lang_label.setStyleSheet(
+            f"font-weight: 600; color: {c['text']}; "
+            f"font-size: {FONT['label']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        self.content_layout.addWidget(lang_label)
+        self.content_layout.addSpacing(SPACE["xs"])
 
         self.language_combo = QComboBox()
         self.language_combo.setStyleSheet(self._settings_input_style())
@@ -1312,48 +1325,61 @@ class DashboardWindow(QWidget):
         if current_index >= 0:
             self.language_combo.setCurrentIndex(current_index)
         self.language_combo.currentIndexChanged.connect(self._on_language_changed)
-        sl.addWidget(self.language_combo)
-        self.content_layout.addWidget(card)
+        self.content_layout.addWidget(self.language_combo)
+        self.content_layout.addSpacing(SPACE["lg"])
 
-        # ══════════════════════════════════════════════════════════════
-        # CARD 4 — Advanced Parameters
-        # ══════════════════════════════════════════════════════════════
-        card, sl = self._make_section_card()
-        sl.addWidget(self._section_header_label("⚙", "Advanced Parameters"))
+        # ── Advanced Parameters ───────────────────────────────────────
+        self.content_layout.addWidget(self._section_header_label("", "Advanced Parameters"))
 
         # ── Detection Size ──
-        sl.addSpacing(SPACE["sm"])
+        self.content_layout.addSpacing(SPACE["sm"])
+        det_row = QHBoxLayout()
         det_lbl = QLabel("Detection Size")
-        det_lbl.setStyleSheet(self._settings_label_style())
-        sl.addWidget(det_lbl)
-        sl.addWidget(self._hint_label(
-            "Resolution for text detection. Higher values improve quality but are slower."
-        ))
+        det_lbl.setStyleSheet(
+            f"font-weight: 600; color: {c['text']}; "
+            f"font-size: {FONT['label']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        det_row.addWidget(det_lbl)
+        det_row.addStretch()
+        self.detection_size_value = QLabel(f"{self.detection_size} px")
+        self.detection_size_value.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        det_row.addWidget(self.detection_size_value)
+        self.content_layout.addLayout(det_row)
 
-        det_ctrl = QHBoxLayout()
-        det_ctrl.setSpacing(SPACE["sm"])
         self.detection_size_slider = QSlider(Qt.Horizontal)
         self.detection_size_slider.setRange(DETECTION_SIZE_MIN, DETECTION_SIZE_MAX)
         self.detection_size_slider.setSingleStep(DETECTION_SIZE_STEP)
         self.detection_size_slider.setValue(self.detection_size)
         self.detection_size_slider.setStyleSheet(self._styled_slider())
         self.detection_size_slider.valueChanged.connect(self._on_detection_size_changed)
-        det_ctrl.addWidget(self.detection_size_slider)
-        self.detection_size_value = self._value_badge(f"{self.detection_size} px")
-        det_ctrl.addWidget(self.detection_size_value)
-        sl.addLayout(det_ctrl)
-
-        # ── Box Threshold ──
-        sl.addSpacing(SPACE["sm"])
-        box_lbl = QLabel("Box Threshold")
-        box_lbl.setStyleSheet(self._settings_label_style())
-        sl.addWidget(box_lbl)
-        sl.addWidget(self._hint_label(
-            "Minimum confidence required before a detected region is translated."
+        self.content_layout.addWidget(self.detection_size_slider)
+        self.content_layout.addWidget(self._hint_label(
+            "Controls resolution for text detection. Higher values improve quality but are slower."
         ))
 
-        box_ctrl = QHBoxLayout()
-        box_ctrl.setSpacing(SPACE["sm"])
+        # ── Box Threshold ──
+        self.content_layout.addSpacing(SPACE["sm"])
+        box_row = QHBoxLayout()
+        box_lbl = QLabel("Box Threshold")
+        box_lbl.setStyleSheet(
+            f"font-weight: 600; color: {c['text']}; "
+            f"font-size: {FONT['label']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        box_row.addWidget(box_lbl)
+        box_row.addStretch()
+        self.box_threshold_value = QLabel(f"{self.box_threshold:.2f}")
+        self.box_threshold_value.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        box_row.addWidget(self.box_threshold_value)
+        self.content_layout.addLayout(box_row)
+
         self.box_threshold_slider = QSlider(Qt.Horizontal)
         self.box_threshold_slider.setRange(
             int(BOX_THRESHOLD_MIN * 100), int(BOX_THRESHOLD_MAX * 100)
@@ -1362,51 +1388,75 @@ class DashboardWindow(QWidget):
         self.box_threshold_slider.setValue(int(self.box_threshold * 100))
         self.box_threshold_slider.setStyleSheet(self._styled_slider())
         self.box_threshold_slider.valueChanged.connect(self._on_box_threshold_changed)
-        box_ctrl.addWidget(self.box_threshold_slider)
-        self.box_threshold_value = self._value_badge(f"{self.box_threshold:.2f}")
-        box_ctrl.addWidget(self.box_threshold_value)
-        sl.addLayout(box_ctrl)
+        self.content_layout.addWidget(self.box_threshold_slider)
+        self.content_layout.addWidget(self._hint_label(
+            "Minimum confidence for translating a detected region."
+        ))
 
         # ── Inpainting Size ──
-        sl.addSpacing(SPACE["sm"])
+        self.content_layout.addSpacing(SPACE["sm"])
+        inp_row = QHBoxLayout()
         inp_lbl = QLabel("Inpainting Size")
-        inp_lbl.setStyleSheet(self._settings_label_style())
-        sl.addWidget(inp_lbl)
-        sl.addWidget(self._hint_label("Resolution used when filling in background regions."))
+        inp_lbl.setStyleSheet(
+            f"font-weight: 600; color: {c['text']}; "
+            f"font-size: {FONT['label']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        inp_row.addWidget(inp_lbl)
+        inp_row.addStretch()
+        self.inpainting_size_value = QLabel(f"{self.inpainting_size} px")
+        self.inpainting_size_value.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        inp_row.addWidget(self.inpainting_size_value)
+        self.content_layout.addLayout(inp_row)
 
-        inp_ctrl = QHBoxLayout()
-        inp_ctrl.setSpacing(SPACE["sm"])
         self.inpainting_size_slider = QSlider(Qt.Horizontal)
         self.inpainting_size_slider.setRange(INPAINTING_SIZE_MIN, INPAINTING_SIZE_MAX)
         self.inpainting_size_slider.setSingleStep(INPAINTING_SIZE_STEP)
         self.inpainting_size_slider.setValue(self.inpainting_size)
         self.inpainting_size_slider.setStyleSheet(self._styled_slider())
         self.inpainting_size_slider.valueChanged.connect(self._on_inpainting_size_changed)
-        inp_ctrl.addWidget(self.inpainting_size_slider)
-        self.inpainting_size_value = self._value_badge(f"{self.inpainting_size} px")
-        inp_ctrl.addWidget(self.inpainting_size_value)
-        sl.addLayout(inp_ctrl)
+        self.content_layout.addWidget(self.inpainting_size_slider)
+        self.content_layout.addWidget(self._hint_label(
+            "Resolution for background inpainting."
+        ))
+        self.content_layout.addSpacing(SPACE["lg"])
 
-        self.content_layout.addWidget(card)
-
-        # ══════════════════════════════════════════════════════════════
-        # CARD 5 — Inpainter Model
-        # ══════════════════════════════════════════════════════════════
-        card, sl = self._make_section_card()
-        sl.addWidget(self._section_header_label("🤖", "Inpainter Model"))
-        sl.addWidget(self._hint_label("AI model used for filling in backgrounds after text removal."))
-        sl.addSpacing(SPACE["sm"])
-
+        # ── Inpainter Model ───────────────────────────────────────────
+        inp_model_row = QHBoxLayout()
+        inp_model_lbl = QLabel("Inpainter Model")
+        inp_model_lbl.setStyleSheet(
+            f"font-weight: 600; color: {c['text']}; "
+            f"font-size: {FONT['label']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        inp_model_row.addWidget(inp_model_lbl)
+        inp_model_row.addSpacing(SPACE["md"])
         self.inpainter_combo = QComboBox()
         self.inpainter_combo.setStyleSheet(self._settings_input_style())
-        self.inpainter_combo.addItem("LAMA Large  (recommended)", "lama_large")
-        self.inpainter_combo.addItem("None  (skip inpainting)", "none")
+        self.inpainter_combo.addItem("LAMA Large (recommended)", "lama_large")
+        self.inpainter_combo.addItem("None (skip inpainting)", "none")
         idx = self.inpainter_combo.findData(self.inpainter)
         if idx >= 0:
             self.inpainter_combo.setCurrentIndex(idx)
         self.inpainter_combo.currentIndexChanged.connect(self._on_inpainter_changed)
-        sl.addWidget(self.inpainter_combo)
-        self.content_layout.addWidget(card)
+        inp_model_row.addWidget(self.inpainter_combo)
+        inp_model_row.addStretch()
+        self.content_layout.addLayout(inp_model_row)
+        self.content_layout.addWidget(self._hint_label(
+            "Select the AI model for filling in backgrounds."
+        ))
+
+        # ── Save Button ──
+        self.content_layout.addSpacing(SPACE["md"])
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        self.save_sliders_btn = StyledButton("Save Advanced Parameters", variant="primary")
+        self.save_sliders_btn.clicked.connect(self._save_advanced_parameters)
+        btn_row.addWidget(self.save_sliders_btn)
+        self.content_layout.addLayout(btn_row)
 
     # ── Settings style helpers ─────────────────────────────────────────
     def _settings_input_style(self):
@@ -1458,19 +1508,28 @@ class DashboardWindow(QWidget):
         self.shortcut_changed.emit(key)
 
     def _on_detection_size_changed(self, value: int):
-        self.detection_size = value
         if hasattr(self, "detection_size_value"):
             self.detection_size_value.setText(f"{value} px")
 
     def _on_box_threshold_changed(self, value: int):
-        self.box_threshold = round(value / 100, 2)
         if hasattr(self, "box_threshold_value"):
-            self.box_threshold_value.setText(f"{self.box_threshold:.2f}")
+            self.box_threshold_value.setText(f"{value / 100:.2f}")
 
     def _on_inpainting_size_changed(self, value: int):
-        self.inpainting_size = value
         if hasattr(self, "inpainting_size_value"):
             self.inpainting_size_value.setText(f"{value} px")
+
+    def _save_advanced_parameters(self):
+        if hasattr(self, "detection_size_slider"):
+            self.detection_size = self.detection_size_slider.value()
+        if hasattr(self, "box_threshold_slider"):
+            self.box_threshold = round(self.box_threshold_slider.value() / 100, 2)
+        if hasattr(self, "inpainting_size_slider"):
+            self.inpainting_size = self.inpainting_size_slider.value()
+        
+        if hasattr(self, "save_sliders_btn"):
+            self.save_sliders_btn.setText("✓ Saved")
+            QTimer.singleShot(2000, lambda: self.save_sliders_btn.setText("Save Advanced Parameters"))
 
     def _on_inpainter_changed(self):
         if hasattr(self, "inpainter_combo"):

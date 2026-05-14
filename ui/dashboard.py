@@ -1342,6 +1342,17 @@ class DashboardWindow(QWidget):
         )
         det_row.addWidget(det_lbl)
         det_row.addStretch()
+        
+        self.det_save_btn = StyledButton("✓", variant="primary")
+        self.det_save_btn.clicked.connect(self._save_detection_size)
+        self.det_save_btn.hide()
+        det_row.addWidget(self.det_save_btn)
+        
+        self.det_cancel_btn = StyledButton("✕", variant="secondary")
+        self.det_cancel_btn.clicked.connect(self._cancel_detection_size)
+        self.det_cancel_btn.hide()
+        det_row.addWidget(self.det_cancel_btn)
+        
         self.detection_size_value = QLabel(f"{self.detection_size} px")
         self.detection_size_value.setStyleSheet(
             f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
@@ -1372,6 +1383,17 @@ class DashboardWindow(QWidget):
         )
         box_row.addWidget(box_lbl)
         box_row.addStretch()
+        
+        self.box_save_btn = StyledButton("✓", variant="primary")
+        self.box_save_btn.clicked.connect(self._save_box_threshold)
+        self.box_save_btn.hide()
+        box_row.addWidget(self.box_save_btn)
+        
+        self.box_cancel_btn = StyledButton("✕", variant="secondary")
+        self.box_cancel_btn.clicked.connect(self._cancel_box_threshold)
+        self.box_cancel_btn.hide()
+        box_row.addWidget(self.box_cancel_btn)
+        
         self.box_threshold_value = QLabel(f"{self.box_threshold:.2f}")
         self.box_threshold_value.setStyleSheet(
             f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
@@ -1404,6 +1426,17 @@ class DashboardWindow(QWidget):
         )
         inp_row.addWidget(inp_lbl)
         inp_row.addStretch()
+        
+        self.inp_save_btn = StyledButton("✓", variant="primary")
+        self.inp_save_btn.clicked.connect(self._save_inpainting_size)
+        self.inp_save_btn.hide()
+        inp_row.addWidget(self.inp_save_btn)
+        
+        self.inp_cancel_btn = StyledButton("✕", variant="secondary")
+        self.inp_cancel_btn.clicked.connect(self._cancel_inpainting_size)
+        self.inp_cancel_btn.hide()
+        inp_row.addWidget(self.inp_cancel_btn)
+        
         self.inpainting_size_value = QLabel(f"{self.inpainting_size} px")
         self.inpainting_size_value.setStyleSheet(
             f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
@@ -1448,15 +1481,6 @@ class DashboardWindow(QWidget):
         self.content_layout.addWidget(self._hint_label(
             "Select the AI model for filling in backgrounds."
         ))
-
-        # ── Save Button ──
-        self.content_layout.addSpacing(SPACE["md"])
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        self.save_sliders_btn = StyledButton("Save Advanced Parameters", variant="primary")
-        self.save_sliders_btn.clicked.connect(self._save_advanced_parameters)
-        btn_row.addWidget(self.save_sliders_btn)
-        self.content_layout.addLayout(btn_row)
 
     # ── Settings style helpers ─────────────────────────────────────────
     def _settings_input_style(self):
@@ -1510,26 +1534,59 @@ class DashboardWindow(QWidget):
     def _on_detection_size_changed(self, value: int):
         if hasattr(self, "detection_size_value"):
             self.detection_size_value.setText(f"{value} px")
+            if hasattr(self, "det_save_btn"):
+                if value != self.detection_size:
+                    self.det_save_btn.show()
+                    self.det_cancel_btn.show()
+                else:
+                    self.det_save_btn.hide()
+                    self.det_cancel_btn.hide()
+
+    def _save_detection_size(self):
+        self.detection_size = self.detection_size_slider.value()
+        self.det_save_btn.hide()
+        self.det_cancel_btn.hide()
+
+    def _cancel_detection_size(self):
+        self.detection_size_slider.setValue(self.detection_size)
 
     def _on_box_threshold_changed(self, value: int):
         if hasattr(self, "box_threshold_value"):
             self.box_threshold_value.setText(f"{value / 100:.2f}")
+            if hasattr(self, "box_save_btn"):
+                if round(value / 100, 2) != self.box_threshold:
+                    self.box_save_btn.show()
+                    self.box_cancel_btn.show()
+                else:
+                    self.box_save_btn.hide()
+                    self.box_cancel_btn.hide()
+
+    def _save_box_threshold(self):
+        self.box_threshold = round(self.box_threshold_slider.value() / 100, 2)
+        self.box_save_btn.hide()
+        self.box_cancel_btn.hide()
+
+    def _cancel_box_threshold(self):
+        self.box_threshold_slider.setValue(int(self.box_threshold * 100))
 
     def _on_inpainting_size_changed(self, value: int):
         if hasattr(self, "inpainting_size_value"):
             self.inpainting_size_value.setText(f"{value} px")
+            if hasattr(self, "inp_save_btn"):
+                if value != self.inpainting_size:
+                    self.inp_save_btn.show()
+                    self.inp_cancel_btn.show()
+                else:
+                    self.inp_save_btn.hide()
+                    self.inp_cancel_btn.hide()
 
-    def _save_advanced_parameters(self):
-        if hasattr(self, "detection_size_slider"):
-            self.detection_size = self.detection_size_slider.value()
-        if hasattr(self, "box_threshold_slider"):
-            self.box_threshold = round(self.box_threshold_slider.value() / 100, 2)
-        if hasattr(self, "inpainting_size_slider"):
-            self.inpainting_size = self.inpainting_size_slider.value()
-        
-        if hasattr(self, "save_sliders_btn"):
-            self.save_sliders_btn.setText("✓ Saved")
-            QTimer.singleShot(2000, lambda: self.save_sliders_btn.setText("Save Advanced Parameters"))
+    def _save_inpainting_size(self):
+        self.inpainting_size = self.inpainting_size_slider.value()
+        self.inp_save_btn.hide()
+        self.inp_cancel_btn.hide()
+
+    def _cancel_inpainting_size(self):
+        self.inpainting_size_slider.setValue(self.inpainting_size)
 
     def _on_inpainter_changed(self):
         if hasattr(self, "inpainter_combo"):

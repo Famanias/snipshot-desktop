@@ -1,8 +1,29 @@
 """
 SnipShot Desktop - API Module
+
+Default client: SupabaseAPIClient (direct Supabase connection).
+
+The _ClientProxy allows runtime swapping without touching UI code:
+
+    # Switch to local mode
+    from local_api.client import LocalAPIClient
+    api_client.set_impl(LocalAPIClient())
+
+    # Restore Supabase
+    api_client.reset()
+
+Rollback to the old HTTP client is also supported:
+    from api.client import APIClient
+    api_client.set_impl(APIClient())
 """
 
-from .client import api_client as _default_client, APIClient
+from .supabase_client import SupabaseAPIClient
+from .client import APIClient  # kept for rollback / local dev
+
+# Lazy initialisation: SupabaseAPIClient.__init__ validates env vars and
+# restores the persisted session.  If SUPABASE_URL / SUPABASE_ANON_KEY are
+# missing, the EnvironmentError surfaces here with a clear message.
+_default_client = SupabaseAPIClient()
 
 
 class _ClientProxy:
@@ -24,10 +45,10 @@ class _ClientProxy:
         self._impl = client
 
     def reset(self):
-        """Restore the default (online) API client."""
+        """Restore the default Supabase client."""
         self._impl = _default_client
 
 
 api_client = _ClientProxy(_default_client)
 
-__all__ = ["api_client", "APIClient"]
+__all__ = ["api_client", "SupabaseAPIClient", "APIClient"]

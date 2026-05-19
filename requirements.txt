@@ -16,5 +16,14 @@ python-dotenv>=1.0.0
 # Image processing
 Pillow>=10.0.0
 
+# Direct Supabase connection (replaces database_api server)
+supabase>=2.0.0
+
+# OS-level secure token storage (Windows Credential Manager / macOS Keychain / libsecret)
+keyring>=24.0.0
+
+# Fernet encryption — headless Linux fallback when no keyring backend is available
+cryptography>=41.0.0
+
 # For packaging (optional)
 pyinstaller>=6.0.0

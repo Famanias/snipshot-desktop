@@ -61,7 +61,7 @@ class LocalAPIClient:
                 """
             ).fetchall()
             folders = [dict(r) for r in rows]
-            return {"success": True, "data": {"folders": folders}}
+            return {"success": True, "data": folders}
         except Exception as e:
             return {"success": False, "error": str(e)}
         finally:
@@ -154,11 +154,14 @@ class LocalAPIClient:
     # ==================== Images ====================
 
     def get_images(
-        self, folder_id: int = None, page: int = 1, per_page: int = 50
+        self, folder_id: int = None, page: int = 1, per_page: int = 50, unfiled_only: bool = False
     ) -> Dict[str, Any]:
         conn = db.get_connection()
         try:
-            if folder_id == 0:
+            if unfiled_only:
+                where = "WHERE folder_id IS NULL"
+                params: list = []
+            elif folder_id == 0:
                 where = "WHERE folder_id IS NULL"
                 params: list = []
             elif folder_id is not None:
@@ -205,6 +208,22 @@ class LocalAPIClient:
             if row:
                 return {"success": True, "data": dict(row)}
             return {"success": False, "error": "Image not found"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+        finally:
+            conn.close()
+
+    def get_recent_images(self, page: int = 1, per_page: int = 20) -> Dict[str, Any]:
+        """Fetch the most recently created images across all folders."""
+        conn = db.get_connection()
+        try:
+            offset = (page - 1) * per_page
+            rows = conn.execute(
+                "SELECT * FROM images ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                (per_page, offset),
+            ).fetchall()
+            images = [dict(r) for r in rows]
+            return {"success": True, "data": images}
         except Exception as e:
             return {"success": False, "error": str(e)}
         finally:

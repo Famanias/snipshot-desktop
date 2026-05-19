@@ -26,11 +26,18 @@ Rollback to the old HTTP client is also supported:
 from .supabase_client import SupabaseAPIClient
 from .translator_client import TranslatorClient
 from .client import APIClient  # kept for rollback / local dev
+from local_api.client import LocalAPIClient
 
-# Lazy initialisation: SupabaseAPIClient.__init__ validates env vars and
-# restores the persisted session.  If SUPABASE_URL / SUPABASE_ANON_KEY are
-# missing, the EnvironmentError surfaces here with a clear message.
-_default_client = SupabaseAPIClient()
+# Attempt to initialize SupabaseAPIClient, but fall back to LocalAPIClient if
+# Supabase credentials are not configured or if there's an initialization error.
+# This allows the app to start even when SUPABASE_URL / SUPABASE_ANON_KEY are not set,
+# or if there are compatibility issues, and users can click "Use Local Mode" on the
+# login screen to proceed.
+try:
+    _default_client = SupabaseAPIClient()
+except Exception:
+    # Supabase initialization failed (missing credentials or other error)—use local mode
+    _default_client = LocalAPIClient()
 
 
 class _ClientProxy:

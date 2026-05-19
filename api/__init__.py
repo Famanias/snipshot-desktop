@@ -1,9 +1,15 @@
 """
 SnipShot Desktop - API Module
 
-Default client: SupabaseAPIClient (direct Supabase connection).
+Architecture:
+  - SupabaseAPIClient: Authentication, database, and storage (Supabase)
+  - TranslatorClient: Image translation and OCR (Azure translator backend)
+  - LocalAPIClient: Offline/local mode (optional)
 
-The _ClientProxy allows runtime swapping without touching UI code:
+Default client: SupabaseAPIClient with embedded TranslatorClient.
+
+The _ClientProxy allows runtime swapping of the entire implementation without
+touching UI code:
 
     # Switch to local mode
     from local_api.client import LocalAPIClient
@@ -18,6 +24,7 @@ Rollback to the old HTTP client is also supported:
 """
 
 from .supabase_client import SupabaseAPIClient
+from .translator_client import TranslatorClient
 from .client import APIClient  # kept for rollback / local dev
 
 # Lazy initialisation: SupabaseAPIClient.__init__ validates env vars and
@@ -51,4 +58,4 @@ class _ClientProxy:
 
 api_client = _ClientProxy(_default_client)
 
-__all__ = ["api_client", "SupabaseAPIClient", "APIClient"]
+__all__ = ["api_client", "SupabaseAPIClient", "TranslatorClient", "APIClient"]

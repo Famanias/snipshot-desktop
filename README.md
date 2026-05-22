@@ -2,16 +2,18 @@
 
 A desktop application for capturing, translating, and organizing manga/comic screenshots.
 
+You may visit the earlier versions of this repository at https://github.com/Famanias/snipshot-archived
+
 ## Features
 
 - 📸 **Screen Capture** - Snip any region of your screen
 - 🌐 **Translation** - Automatically translate manga/comics to English
-- ☁️ **Cloud Storage** - Save translations to your account
+- ☁️ **Local & Cloud Storage** - Save translations to your account or locally
 - 📁 **Folder Organization** - Organize translations like Google Drive
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.9.11
 - PyQt5
 - Backend services running (Database API + Translator API)
 
@@ -41,7 +43,7 @@ copy .env.example .env
 5. Configure `.env` with your API URLs:
 ```env
 API_BASE_URL=http://localhost:8002/api
-TRANSLATOR_URL=http://localhost:8000
+TRANSLATOR_URL=http://localhost:8000 (you have to clone the backend repository of this system: https://github.com/Famanias/snipshot-backend)
 ```
 
 ## Running the App
@@ -49,17 +51,10 @@ TRANSLATOR_URL=http://localhost:8000
 Make sure backend services are running first:
 
 ```bash
-# Terminal 1: Database API
-cd ../snipshot-backend/database_api
-python -m uvicorn main:app --reload --port 8002
-
-# Terminal 2: Translator API  
-cd ../snipshot-backend
-python translator_api.py
-
-# Terminal 3: VM Translator
+# Terminal 1: Backend API
 cd ../snipshot-backend
 python main.py
+
 ```
 
 Then run the desktop app:
@@ -84,7 +79,7 @@ python main.py
 ```bash
 pip install pyinstaller
 
-pyinstaller --onefile --windowed --name SnipShot --icon=resources/icon.ico main.py
+pyinstaller --onefile --windowed --name SnipShot --hidden-import=keyring --hidden-import=keyring.backends --hidden-import=keyring.backends.Windows main.py
 ```
 
 The executable will be in `dist/SnipShot.exe`
@@ -136,7 +131,7 @@ snipshot-desktop/
 - **Database**: Supabase PostgreSQL
 - **Storage**: Supabase Storage
 - **Auth**: Supabase Auth (JWT)
-- **Translation**: manga_translator (local VM)
+- **Translation**: Meta LLAMA 4 via Groq / OpenRouter API(local VM)
 
 ## License
 

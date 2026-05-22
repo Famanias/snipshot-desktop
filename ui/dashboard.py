@@ -665,7 +665,7 @@ class DashboardWindow(QWidget):
         sidebar_layout.addWidget(self.snip_btn)
 
         # Upload button
-        self.upload_btn = QPushButton("\U0001F4E4 Upload Image")
+        self.upload_btn = QPushButton("\U0001F4E4 Translate via Upload")
         self.upload_btn.setCursor(Qt.PointingHandCursor)
         self.upload_btn.clicked.connect(self._on_upload)
         sidebar_layout.addWidget(self.upload_btn)
@@ -838,7 +838,7 @@ class DashboardWindow(QWidget):
     # ── Data loading ───────────────────────────────────────────────────
     def load_user_info(self):
         if api_client.user:
-            email = api_client.user.get("email", "Unknown")
+            email = getattr(api_client.user, "email", "Unknown")
             self.user_label.setText(f"\U0001F464 {email}")
 
     def refresh(self):
@@ -884,7 +884,7 @@ class DashboardWindow(QWidget):
 
             def run(self):
                 folders_result = api_client.get_folders()
-                images_result = api_client.get_images(folder_id=0, per_page=20)
+                images_result = api_client.get_images(unfiled_only=True, per_page=20)
                 self.finished.emit(folders_result, images_result)
 
         self._clear_content()
@@ -904,8 +904,10 @@ class DashboardWindow(QWidget):
         c = theme.c
         self._clear_content()
 
-        if folders_result["success"]:
-            folders = folders_result["data"].get("folders", [])
+        if folders_result.get("success"):
+            folders = folders_result.get("data", [])
+            folders = folders if isinstance(folders, list) else []
+
             if folders:
                 folders_label = QLabel("Folders")
                 folders_label.setStyleSheet(
@@ -916,34 +918,45 @@ class DashboardWindow(QWidget):
 
                 folder_grid = QWidget()
                 folder_grid_layout = FlowLayout(folder_grid, spacing=SPACE["md"])
+
                 for folder in folders:
                     card = FolderCard(folder)
                     card.clicked.connect(self._on_folder_clicked)
                     card.delete_requested.connect(self._on_delete_folder)
                     card.rename_requested.connect(self._on_rename_folder)
                     folder_grid_layout.addWidget(card)
+
                 self.content_layout.addWidget(folder_grid)
 
-            if images_result["success"]:
-                images = images_result["data"].get("images", [])
-                if images:
-                    self.content_layout.addSpacing(SPACE["md"])
-                    images_label = QLabel("Unfiled Images")
-                    images_label.setStyleSheet(
-                        f"font-size: {FONT['body']['size']}px; font-weight: 500; "
-                        f"color: {c['text_secondary']}; background-color: transparent;"
-                    )
-                    self.content_layout.addWidget(images_label)
-                    self._add_image_grid(images)
+        if images_result.get("success"):
+            # In _on_data_loaded and _load_folder
+            data = images_result.get("data", {})
+            images = data.get("images", []) if isinstance(data, dict) else data
 
-            if not folders and not (
-                images_result.get("success") and images_result["data"].get("images")
-            ):
-                self._show_empty_state(
-                    "No files yet", "Capture a screenshot to get started!"
+            if images:
+                self.content_layout.addSpacing(SPACE["md"])
+
+                images_label = QLabel("Unfiled Images")
+                images_label.setStyleSheet(
+                    f"font-size: {FONT['body']['size']}px; font-weight: 500; "
+                    f"color: {c['text_secondary']}; background-color: transparent;"
                 )
-        else:
-            self._show_error("Failed to load folders")
+                self.content_layout.addWidget(images_label)
+
+                self._add_image_grid(images)
+
+        # unified empty state logic
+        data = images_result.get("data", {})
+        folders = folders_result.get("data", [])
+        images = data.get("images", []) if isinstance(data, dict) else data
+
+        folders = folders if isinstance(folders, list) else []
+        images = images if isinstance(images, list) else []
+
+        if not folders and not images:
+            self._show_empty_state(
+                "No files yet", "Capture a screenshot to get started!"
+            )
 
         self.content_layout.addStretch()
 
@@ -961,8 +974,10 @@ class DashboardWindow(QWidget):
         self.content_layout.addWidget(back_btn)
 
         result = api_client.get_images(folder_id=folder_id, page=1, per_page=100)
-        if result["success"]:
-            images = result["data"].get("images", [])
+        if result.get("success"):
+            data = result.get("data", {})
+            images = data.get("images", []) if isinstance(data, dict) else data
+            
             if images:
                 self._add_image_grid(images)
             else:
@@ -1083,9 +1098,9 @@ class DashboardWindow(QWidget):
         self.new_folder_btn.setVisible(False)
         self._clear_content()
 
-        result = api_client.get_images()
-        if result["success"]:
-            images = result["data"].get("images", [])
+        result = api_client.get_recent_images()
+        if result.get("success"):
+            images = result.get("data", [])
             if images:
                 self._add_image_grid(images)
             else:
@@ -1628,7 +1643,7 @@ class DashboardWindow(QWidget):
             name, description = dialog.get_values()
             if name:
                 result = api_client.create_folder(name, description)
-                if result["success"]:
+                if result.get("success"):
                     self.refresh()
                 else:
                     QMessageBox.warning(
@@ -1659,7 +1674,7 @@ class DashboardWindow(QWidget):
         else:
             return
 
-        if result["success"]:
+        if result.get("success"):
             self.refresh()
         else:
             QMessageBox.warning(self, "Error", "Failed to delete folder")
@@ -1670,7 +1685,7 @@ class DashboardWindow(QWidget):
         )
         if ok and new_name and new_name != current_name:
             result = api_client.update_folder(folder_id, name=new_name)
-            if result["success"]:
+            if result.get("success"):
                 self.refresh()
             else:
                 QMessageBox.warning(
@@ -1686,7 +1701,7 @@ class DashboardWindow(QWidget):
         )
         if reply == QMessageBox.Yes:
             result = api_client.delete_image(image_id)
-            if result["success"]:
+            if result.get("success"):
                 self.refresh()
             else:
                 QMessageBox.warning(self, "Error", "Failed to delete image")
@@ -1697,23 +1712,20 @@ class DashboardWindow(QWidget):
             self, "Rename Image", "New filename:", text=current_name
         )
         if ok and new_name.strip() and new_name.strip() != current_name:
-            result = api_client.update_image(
-                image_data["id"], filename=new_name.strip()
-            )
-            if result["success"]:
+            result = api_client.update_image(image_data["id"], filename=new_name.strip())
+            if result.get("success"):
                 self.refresh()
             else:
-                QMessageBox.warning(
-                    self, "Error", result.get("error", "Failed to rename image")
-                )
+                QMessageBox.warning(self, "Error", result.get("error", "Failed to rename image"))
+
 
     def _on_move_image(self, image_data: dict):
         folders_result = api_client.get_folders()
-        if not folders_result["success"]:
+        if not folders_result.get("success"):
             QMessageBox.warning(self, "Error", "Failed to load folders")
             return
 
-        folders = folders_result["data"].get("folders", [])
+        folders = folders_result.get("data", [])
         folder_names = ["Unfiled"] + [f["name"] for f in folders]
         folder_ids = [0] + [f["id"] for f in folders]
 
@@ -1736,8 +1748,8 @@ class DashboardWindow(QWidget):
         if ok and choice:
             idx = folder_names.index(choice)
             folder_id = folder_ids[idx]
-            result = api_client.update_image(image_data["id"], folder_id=folder_id)
-            if result["success"]:
+            result = api_client.move_image_to_folder(image_data["id"], folder_id=folder_id)
+            if result.get("success"):
                 self.refresh()
             else:
                 QMessageBox.warning(

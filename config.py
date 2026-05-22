@@ -7,6 +7,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ---------------------------------------------------------------------------
+# Supabase credentials (direct connection)
+# Get these from Supabase dashboard → Project Settings → API
+# ---------------------------------------------------------------------------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+
+# ⚠️  NEVER add SUPABASE_SERVICE_KEY to a desktop app.
+# Service keys bypass Row Level Security entirely and must only be used
+# server-side.  If you see it here, remove it immediately.
+
 # API Endpoints
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
 TRANSLATOR_URL = os.getenv("TRANSLATOR_URL", "http://localhost:8001")

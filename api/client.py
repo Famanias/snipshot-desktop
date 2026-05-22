@@ -1,5 +1,6 @@
 """
-SnipShot Desktop - API Client
+DEPRECIATTED - This file is no longer used in the current architecture. The API client logic has been moved to the backend service, and the desktop app now communicates with it directly for all operations.
+SnipShot Desktop - API Client 
 
 Handles all communication with the backend services:
 - Database API (users, folders, images)

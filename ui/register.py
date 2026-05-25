@@ -326,8 +326,10 @@ class RegisterWindow(QWidget):
         try:
             result = api_client.register(email, password)
             if result["success"]:
-                data = result.get("data", {})
-                if data.get("access_token"):
+                # Check if user is immediately authenticated (no email confirmation required)
+                # data = result.get("data", {})
+                # if data.get("access_token"):
+                if api_client.access_token:
                     self.register_success.emit()
                 else:
                     self._show_success("Account created! Please check your email to confirm.")

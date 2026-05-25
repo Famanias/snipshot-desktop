@@ -104,7 +104,13 @@ class SupabaseAPIClient:
         before tokens can be stored.
         """
         try:
-            res = self.client.auth.sign_up({"email": email, "password": password})
+            res = self.client.auth.sign_up({
+                "email": email,
+                "password": password,
+                "options": {
+                    "email_redirect_to": "https://snipshot.space/welcome/new-user"
+                }
+            })
             if res.session:
                 save_tokens(res.session.access_token, res.session.refresh_token)
                 self.access_token = res.session.access_token

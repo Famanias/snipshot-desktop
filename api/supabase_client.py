@@ -27,10 +27,12 @@ Delete order rule:
 import time
 from typing import Any, Optional
 
+import httpx
 from supabase import create_client, Client
 
 from api.token_storage import load_tokens, save_tokens, clear_tokens
-from api.translator_client import TranslatorClient
+from api.translator_client import TranslatorClient, _TokenExpired
+from api.exceptions import AuthenticationError
 from config import SUPABASE_URL, SUPABASE_ANON_KEY
 
 # Name of the storage bucket used for user images
@@ -52,8 +54,6 @@ class SupabaseAPIClient:
             )
         self.client: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
         self.user = None
-        self.access_token = None
-        self.refresh_token = None
         self._translator = TranslatorClient()
         self._restore_session()
 
@@ -68,18 +68,26 @@ class SupabaseAPIClient:
                 )
                 if res and res.user:
                     self.user = res.user
-                    self.access_token = tokens["access_token"]
-                    self.refresh_token = tokens["refresh_token"]
             except Exception:
                 # Tokens invalid or expired past their refresh window
                 clear_tokens()
                 self.user = None
-                self.access_token = None
-                self.refresh_token = None
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    @property
+    def access_token(self) -> Optional[str]:
+        """Always read the token from the live Supabase session, never a cached copy."""
+        session = self.client.auth.get_session()
+        return session.access_token if session else None
+
+    @property
+    def refresh_token(self) -> Optional[str]:
+        """Always read the token from the live Supabase session, never a cached copy."""
+        session = self.client.auth.get_session()
+        return session.refresh_token if session else None
 
     @property
     def is_authenticated(self) -> bool:
@@ -107,14 +115,10 @@ class SupabaseAPIClient:
             res = self.client.auth.sign_up({"email": email, "password": password})
             if res.session:
                 save_tokens(res.session.access_token, res.session.refresh_token)
-                self.access_token = res.session.access_token
-                self.refresh_token = res.session.refresh_token
             self.user = res.user
             return self._ok(res.user)
         except Exception as e:
             self.user = None
-            self.access_token = None
-            self.refresh_token = None
             return self._err(e)
 
     def login(self, email: str, password: str) -> dict:
@@ -125,13 +129,9 @@ class SupabaseAPIClient:
             )
             save_tokens(res.session.access_token, res.session.refresh_token)
             self.user = res.user
-            self.access_token = res.session.access_token
-            self.refresh_token = res.session.refresh_token
             return self._ok(res.user)
         except Exception as e:
             self.user = None
-            self.access_token = None
-            self.refresh_token = None
             return self._err(e)
 
     def logout(self) -> dict:
@@ -143,8 +143,6 @@ class SupabaseAPIClient:
         finally:
             clear_tokens()
             self.user = None
-            self.access_token = None
-            self.refresh_token = None
         return self._ok()
 
     def get_profile(self) -> dict:
@@ -546,4 +544,19 @@ class SupabaseAPIClient:
 
     def translate_image(self, image_bytes: bytes, config: dict = None) -> dict:
         """Delegate image translation to the dedicated TranslatorClient."""
-        return self._translator.translate_image(image_bytes, config)
+        try:
+            return self._translator.translate_image(
+                image_bytes, config, token=self.access_token
+            )
+        except _TokenExpired:
+            # Refresh the Supabase session and retry once
+            self.client.auth.refresh_session()
+            new_token = self.access_token
+            if new_token is None:
+                raise AuthenticationError("Session could not be refreshed. Please log in again.")
+            try:
+                return self._translator.translate_image(
+                    image_bytes, config, token=new_token, _retry=False
+                )
+            except (_TokenExpired, httpx.HTTPStatusError):
+                raise AuthenticationError("Session expired. Please log in again.")

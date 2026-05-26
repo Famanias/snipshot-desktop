@@ -15,6 +15,10 @@ from typing import Any, Optional, Dict
 from config import TRANSLATOR_URL, DEFAULT_TRANSLATION_CONFIG
 
 
+class _TokenExpired(Exception):
+    """Sentinel raised when the backend returns 401, triggering a refresh-and-retry."""
+
+
 class TranslatorClient:
     """Dedicated client for translation, OCR, and image inference operations.
     
@@ -39,7 +43,9 @@ class TranslatorClient:
     def translate_image(
         self, 
         image_bytes: bytes, 
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        token: Optional[str] = None,
+        _retry: bool = True
     ) -> dict:
         """Translate text in an image.
         
@@ -54,6 +60,8 @@ class TranslatorClient:
                    - detector: Detection settings (detection_size, box_threshold)
                    - translator: Translation settings (target_lang)
                    - inpainter: Inpainting settings (inpainter, inpainting_size)
+            token: Supabase JWT access token
+            _retry: Whether to retry once on 401
         
         Returns:
             Response dict with keys:
@@ -63,6 +71,10 @@ class TranslatorClient:
         """
         if config is None:
             config = DEFAULT_TRANSLATION_CONFIG
+
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
 
         with httpx.Client(timeout=180.0) as client:  # 3 min timeout for translation
             files = {
@@ -78,8 +90,13 @@ class TranslatorClient:
                 response = client.post(
                     translate_url,
                     files=files,
-                    data=data
+                    data=data,
+                    headers=headers
                 )
+                if response.status_code == 401 and _retry:
+                    raise _TokenExpired()
+            except _TokenExpired:
+                raise
             except httpx.RequestError as e:
                 return {
                     "success": False,

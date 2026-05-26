@@ -19,7 +19,8 @@
 # ─────────────────────────────────────────────────────────────────────
 
 from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QIcon
+import os
 
 from .theme import theme
 
@@ -456,11 +457,12 @@ def folder_card():
     c = _c()
     return f"""
         FolderCard {{
-            background-color: {c['surface']};
+            background-color: {c['hover']};
             border: 1px solid {c['border']};
-            border-radius: {SPACE['sm']}px;
+            border-radius: 12px;
         }}
         FolderCard:hover {{
+            background-color: {c['scrollbar']};
             border-color: {c['primary']};
         }}
     """
@@ -470,9 +472,9 @@ def image_card():
     c = _c()
     return f"""
         ImageCard {{
-            background-color: {c['surface']};
+            background-color: {c['surface_alt']};
             border: 1px solid {c['border']};
-            border-radius: {SPACE['sm']}px;
+            border-radius: 12px;
         }}
         ImageCard:hover {{
             border-color: {c['primary']};
@@ -696,6 +698,28 @@ def password_strength_bar(level: int):
             border-radius: 2px;
         }}
     """
+
+
+# ── Icon helper ────────────────────────────────────────────────────────
+
+def load_icon(icon_name: str) -> QIcon:
+    """
+    Load an SVG icon from the ui/icons folder.
+    
+    Args:
+        icon_name: The icon filename without path (e.g., "folder_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg")
+    
+    Returns:
+        A QIcon object, or empty QIcon if file not found
+    """
+    icon_dir = os.path.dirname(os.path.abspath(__file__))
+    icon_path = os.path.join(icon_dir, "icons", icon_name)
+    
+    if os.path.exists(icon_path):
+        return QIcon(icon_path)
+    else:
+        print(f"Warning: Icon not found at {icon_path}")
+        return QIcon()
 
 
 CAPTURE_STYLESHEET = """

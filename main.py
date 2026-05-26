@@ -17,9 +17,34 @@ import sys
 import os
 import ctypes
 import ctypes.wintypes
+import logging
+import traceback
+from pathlib import Path
+import platformdirs
 from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QSystemTrayIcon, QMenu, QAction
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIcon, QPixmap
+
+# Setup crash logging
+log_dir = Path(platformdirs.user_data_dir("Snipshot", "Snipshot"))
+log_dir.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    filename=log_dir / "snipshot.log",
+    level=logging.ERROR,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
+
+def handle_exception(exc_type, exc_value, exc_tb):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    logging.critical(
+        "Unhandled exception",
+        exc_info=(exc_type, exc_value, exc_tb)
+    )
+
+sys.excepthook = handle_exception
+
 
 from config import APP_NAME, APP_VERSION, DEFAULT_SHORTCUT_KEY
 from ui import (

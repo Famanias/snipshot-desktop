@@ -123,7 +123,7 @@ class MainWindow(QMainWindow):
         self.login_screen = LoginWindow()
         self.login_screen.login_success.connect(self._on_login_success)
         self.login_screen.show_register.connect(self._show_register)
-        self.login_screen.local_mode_requested.connect(self._on_local_mode)
+        self.login_screen.offline_mode_requested.connect(self._on_offline_mode)
         self.stack.addWidget(self.login_screen)
         
         # Register screen
@@ -174,8 +174,8 @@ class MainWindow(QMainWindow):
         self.register_screen.clear_fields()
         self._show_dashboard()
 
-    def _on_local_mode(self):
-        """Switch to local mode — use local SQLite + filesystem storage."""
+    def _on_offline_mode(self):
+        """Switch to offline mode — use local SQLite + filesystem storage."""
         from PyQt5.QtWidgets import QMessageBox
         from PyQt5.QtCore import Qt
         from PyQt5.QtGui import QCursor
@@ -201,7 +201,7 @@ class MainWindow(QMainWindow):
                 self,
                 "Local Backend Offline",
                 f"Could not connect to the local translator backend at {LOCAL_TRANSLATOR_URL}.\n\n"
-                "Please make sure your local backend repository is running before using Local Mode.\n\n"
+                "Please make sure your local backend repository is running before using Offline Mode.\n\n"
                 "To launch it, open a terminal and run:\n"
                 "  cd C:\\Users\\neilc\\OneDrive\\Documents\\GitHub\\snipshot-backend\n"
                 "  python main.py\n\n"
@@ -210,10 +210,11 @@ class MainWindow(QMainWindow):
             return
 
         from local_api import LocalAPIClient
-        self._local_client = LocalAPIClient()
+        self._local_client = LocalAPIClient(translator_url=LOCAL_TRANSLATOR_URL)
         api_client.set_impl(self._local_client)
         self.login_screen.clear_fields()
         self._show_dashboard()
+
     
     def _install_snip_shortcut(self, key: int = None):
         """

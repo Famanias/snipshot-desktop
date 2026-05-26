@@ -37,12 +37,12 @@ class LoginWindow(QWidget):
     Signals:
         login_success: Emitted when login is successful
         show_register: Emitted when user wants to create account
-        local_mode_requested: Emitted when user wants local-only mode
+        offline_mode_requested: Emitted when user wants offline-only mode
     """
 
     login_success = pyqtSignal()
     show_register = pyqtSignal()
-    local_mode_requested = pyqtSignal()
+    offline_mode_requested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,7 +63,7 @@ class LoginWindow(QWidget):
         self.container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         cl = QVBoxLayout(self.container)
-        cl.setContentsMargins(SPACE["xl"], SPACE["xl"], SPACE["xl"], SPACE["xl"])
+        cl.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
         cl.setSpacing(SPACE["sm"])
 
         # Logo / Title
@@ -118,7 +118,7 @@ class LoginWindow(QWidget):
 
         # Sign In button
         self.login_btn = StyledButton("Sign In", variant="primary")
-        self.login_btn.setMinimumHeight(48)
+        self.login_btn.setMinimumHeight(44)
         self.login_btn.clicked.connect(self._on_login)
         cl.addWidget(self.login_btn)
 
@@ -145,16 +145,19 @@ class LoginWindow(QWidget):
         self.register_btn.clicked.connect(self._on_show_register)
         cl.addWidget(self.register_btn)
 
-        cl.addSpacing(SPACE["sm"])
+        cl.addSpacing(SPACE["md"])
 
-        # Local mode button — secondary, no emoji
-        self.local_mode_btn = StyledButton("Use Local Mode", variant="secondary")
-        self.local_mode_btn.setMinimumHeight(44)
-        self.local_mode_btn.clicked.connect(self._on_local_mode)
-        cl.addWidget(self.local_mode_btn)
+        # Offline mode button — secondary, no emoji
+        self.offline_mode_btn = StyledButton("Use Offline Mode", variant="secondary")
+        self.offline_mode_btn.setMinimumHeight(44)
+        self.offline_mode_btn.clicked.connect(self._on_offline_mode)
+        cl.addWidget(self.offline_mode_btn)
 
-        self.local_hint_label = QLabel("Save files locally without an account")
+        cl.addSpacing(SPACE["xs"])
+
+        self.local_hint_label = QLabel("use the app locally (dev mode)")
         self.local_hint_label.setAlignment(Qt.AlignCenter)
+        self.local_hint_label.setWordWrap(True)
         cl.addWidget(self.local_hint_label)
 
         layout.addWidget(self.container)
@@ -236,8 +239,8 @@ class LoginWindow(QWidget):
     def _on_show_register(self):
         self.show_register.emit()
 
-    def _on_local_mode(self):
-        self.local_mode_requested.emit()
+    def _on_offline_mode(self):
+        self.offline_mode_requested.emit()
 
     def clear_fields(self):
         self.email_input.clear()

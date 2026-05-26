@@ -58,7 +58,7 @@ class StyledButton(QPushButton):
                     color: white;
                     border: none;
                     border-radius: {SPACE['sm']}px;
-                    padding: {SPACE['md']}px {SPACE['lg']}px;
+                    padding: {SPACE['sm']}px {SPACE['lg']}px;
                     font-size: {FONT['body']['size']}px;
                     font-weight: 600;
                     min-height: 44px;
@@ -81,7 +81,7 @@ class StyledButton(QPushButton):
                     color: {c['text']};
                     border: 1px solid {c['border']};
                     border-radius: {SPACE['sm']}px;
-                    padding: {SPACE['md']}px {SPACE['lg']}px;
+                    padding: {SPACE['sm']}px {SPACE['lg']}px;
                     font-size: {FONT['body']['size']}px;
                     font-weight: 500;
                     min-height: 44px;
@@ -127,7 +127,7 @@ class StyledButton(QPushButton):
                     color: white;
                     border: none;
                     border-radius: {SPACE['sm']}px;
-                    padding: {SPACE['md']}px {SPACE['lg']}px;
+                    padding: {SPACE['sm']}px {SPACE['lg']}px;
                     font-size: {FONT['body']['size']}px;
                     font-weight: 600;
                     min-height: 44px;

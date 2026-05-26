@@ -12,7 +12,7 @@ import time
 import httpx
 from typing import Optional, Dict, Any
 
-from config import TRANSLATOR_URL, DEFAULT_TRANSLATION_CONFIG
+from config import LOCAL_TRANSLATOR_URL, DEFAULT_TRANSLATION_CONFIG
 from . import database as db
 from . import storage
 
@@ -20,11 +20,11 @@ from . import storage
 class LocalAPIClient:
     """API client that stores everything locally (SQLite + filesystem)."""
 
-    def __init__(self):
+    def __init__(self, translator_url: Optional[str] = None):
         self.access_token = "local"
         self.refresh_token = None
         self.user = {"email": "Local User", "id": "local"}
-        self.translator_url = TRANSLATOR_URL
+        self.translator_url = translator_url or LOCAL_TRANSLATOR_URL
         db.init_db()
         storage.init_storage()
 

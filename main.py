@@ -176,6 +176,39 @@ class MainWindow(QMainWindow):
 
     def _on_local_mode(self):
         """Switch to local mode — use local SQLite + filesystem storage."""
+        from PyQt5.QtWidgets import QMessageBox
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QCursor
+        import httpx
+        from config import LOCAL_TRANSLATOR_URL
+
+        # Set wait cursor during check
+        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+        backend_active = False
+        error_msg = ""
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                # Perform a request to verify the server is running and reachable
+                client.get(LOCAL_TRANSLATOR_URL)
+                backend_active = True
+        except Exception as e:
+            error_msg = str(e)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not backend_active:
+            QMessageBox.critical(
+                self,
+                "Local Backend Offline",
+                f"Could not connect to the local translator backend at {LOCAL_TRANSLATOR_URL}.\n\n"
+                "Please make sure your local backend repository is running before using Local Mode.\n\n"
+                "To launch it, open a terminal and run:\n"
+                "  cd C:\\Users\\neilc\\OneDrive\\Documents\\GitHub\\snipshot-backend\n"
+                "  python main.py\n\n"
+                f"Details: {error_msg}"
+            )
+            return
+
         from local_api import LocalAPIClient
         self._local_client = LocalAPIClient()
         api_client.set_impl(self._local_client)

@@ -457,12 +457,12 @@ def folder_card():
     c = _c()
     return f"""
         FolderCard {{
-            background-color: {c['hover']};
+            background-color: {c['surface']};
             border: 1px solid {c['border']};
             border-radius: 12px;
         }}
         FolderCard:hover {{
-            background-color: {c['scrollbar']};
+            background-color: {c['hover']};
             border-color: {c['primary']};
         }}
     """
@@ -472,11 +472,12 @@ def image_card():
     c = _c()
     return f"""
         ImageCard {{
-            background-color: {c['surface_alt']};
+            background-color: {c['surface']};
             border: 1px solid {c['border']};
             border-radius: 12px;
         }}
         ImageCard:hover {{
+            background-color: {c['hover']};
             border-color: {c['primary']};
         }}
     """
@@ -705,15 +706,36 @@ def password_strength_bar(level: int):
 def load_icon(icon_name: str) -> QIcon:
     """
     Load an SVG icon from the ui/icons folder.
+    Automatically adjusts icon color based on current theme:
+    - Dark mode: uses light/grey icons (E3E3E3)
+    - Light mode: uses dark icons (212121)
     
     Args:
-        icon_name: The icon filename without path (e.g., "folder_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg")
+        icon_name: The icon filename (can have E3E3E3 or 212121, will be normalized)
     
     Returns:
         A QIcon object, or empty QIcon if file not found
     """
+    from .theme import theme
     icon_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Normalize the icon name based on current theme
+    if theme.is_dark:
+        # Dark mode: use light-colored icons (E3E3E3)
+        if "212121" in icon_name:
+            icon_name = icon_name.replace("212121", "E3E3E3")
+    else:
+        # Light mode: use dark-colored icons (212121)
+        if "E3E3E3" in icon_name:
+            icon_name = icon_name.replace("E3E3E3", "212121")
+    
     icon_path = os.path.join(icon_dir, "icons", icon_name)
+    
+    if os.path.exists(icon_path):
+        return QIcon(icon_path)
+    else:
+        print(f"Warning: Icon not found at {icon_path}")
+        return QIcon()
     
     if os.path.exists(icon_path):
         return QIcon(icon_path)

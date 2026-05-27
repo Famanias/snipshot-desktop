@@ -529,10 +529,9 @@ class FolderCard(QFrame):
         self.image_count = folder_data.get("image_count", 0)
         self.setCursor(Qt.PointingHandCursor)
         self._setup_ui()
+        theme.theme_changed.connect(self._on_theme_changed)
 
     def _setup_ui(self):
-        c = theme.c
-        self.setStyleSheet(styles.folder_card())
         self.setFixedSize(200, 140)
 
         layout = QVBoxLayout(self)
@@ -544,33 +543,56 @@ class FolderCard(QFrame):
         top_row.setContentsMargins(0, 0, 0, 0)
 
         # Icon box
-        icon_box = QFrame()
-        icon_box.setFixedSize(36, 36)
-        icon_box.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['bg']};
-                border-radius: 8px;
-            }}
-        """)
-        box_layout = QVBoxLayout(icon_box)
+        self.icon_box = QFrame()
+        self.icon_box.setFixedSize(36, 36)
+        box_layout = QVBoxLayout(self.icon_box)
         box_layout.setContentsMargins(0, 0, 0, 0)
         box_layout.setAlignment(Qt.AlignCenter)
 
-        icon_label = QLabel()
-        icon_pixmap = load_icon("folder_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg").pixmap(18, 18)
-        icon_label.setPixmap(icon_pixmap)
-        icon_label.setStyleSheet(f"background-color: transparent;")
-        icon_label.setAlignment(Qt.AlignCenter)
-        box_layout.addWidget(icon_label)
-        top_row.addWidget(icon_box)
+        self.icon_label = QLabel()
+        self.icon_label.setStyleSheet("background-color: transparent;")
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        box_layout.addWidget(self.icon_label)
+        top_row.addWidget(self.icon_box)
 
         top_row.addStretch()
 
         # Menu button
         self.menu_btn = QPushButton()
         self.menu_btn.setFixedSize(24, 24)
-        self.menu_btn.setIcon(load_icon("more_vert_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.menu_btn.setIconSize(QSize(24, 24))
+        self.menu_btn.clicked.connect(self._on_menu_clicked)
+        top_row.addWidget(self.menu_btn)
+
+        layout.addLayout(top_row)
+        layout.addSpacing(SPACE["xs"])
+
+        # Folder Name
+        self.name_label = QLabel(self.folder_name)
+        self.name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.name_label.setWordWrap(False)
+        layout.addWidget(self.name_label)
+
+        # Count
+        image_label_text = "image" if self.image_count == 1 else "images"
+        self.count_label = QLabel(f"{self.image_count} {image_label_text}")
+        self.count_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(self.count_label)
+
+        self._apply_style()
+
+    def _apply_style(self):
+        c = theme.c
+        self.setStyleSheet(styles.folder_card())
+        self.icon_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['bg']};
+                border-radius: 8px;
+            }}
+        """)
+        icon_pixmap = load_icon("folder_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg").pixmap(18, 18)
+        self.icon_label.setPixmap(icon_pixmap)
+        self.menu_btn.setIcon(load_icon("more_vert_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.menu_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
@@ -585,31 +607,18 @@ class FolderCard(QFrame):
                 color: {c['primary']};
             }}
         """)
-        self.menu_btn.clicked.connect(self._on_menu_clicked)
-        top_row.addWidget(self.menu_btn)
-
-        layout.addLayout(top_row)
-        layout.addSpacing(SPACE["xs"])
-
-        # Folder Name
-        name_label = QLabel(self.folder_name)
-        name_label.setStyleSheet(
+        self.name_label.setStyleSheet(
             f"font-weight: 600; color: {c['text']}; "
             f"font-size: {FONT['body']['size']}px; background-color: transparent;"
         )
-        name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        name_label.setWordWrap(False)
-        layout.addWidget(name_label)
-
-        # Count
-        image_label_text = "image" if self.image_count == 1 else "images"
-        count_label = QLabel(f"{self.image_count} {image_label_text}")
-        count_label.setStyleSheet(
+        self.count_label.setStyleSheet(
             f"color: {c['text_secondary']}; font-size: {FONT['caption']['size']}px; "
             "background-color: transparent;"
         )
-        count_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        layout.addWidget(count_label)
+
+    def _on_theme_changed(self, _mode=None):
+        """Reload styles when theme changes."""
+        self._apply_style()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -653,10 +662,9 @@ class ImageCard(QFrame):
         self.image_data = image_data
         self.setCursor(Qt.PointingHandCursor)
         self._setup_ui()
+        theme.theme_changed.connect(self._on_theme_changed)
 
     def _setup_ui(self):
-        c = theme.c
-        self.setStyleSheet(styles.image_card())
         self.setFixedSize(220, 180)
 
         layout = QVBoxLayout(self)
@@ -665,15 +673,6 @@ class ImageCard(QFrame):
 
         # Image preview container
         self.preview_box = QFrame()
-        self.preview_box.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['bg']};
-                border-top-left-radius: 12px;
-                border-top-right-radius: 12px;
-                border-bottom-left-radius: 0px;
-                border-bottom-right-radius: 0px;
-            }}
-        """)
         self.preview_box.setFixedHeight(120)
 
         preview_layout = QVBoxLayout(self.preview_box)
@@ -687,17 +686,8 @@ class ImageCard(QFrame):
         layout.addWidget(self.preview_box)
 
         # Bottom info section
-        info_section = QFrame()
-        info_section.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['surface_alt']};
-                border-bottom-left-radius: 12px;
-                border-bottom-right-radius: 12px;
-                border-top-left-radius: 0px;
-                border-top-right-radius: 0px;
-            }}
-        """)
-        info_layout = QHBoxLayout(info_section)
+        self.info_section = QFrame()
+        info_layout = QHBoxLayout(self.info_section)
         info_layout.setContentsMargins(SPACE["sm"], SPACE["sm"], SPACE["sm"], SPACE["sm"])
         info_layout.setSpacing(SPACE["xs"])
 
@@ -707,29 +697,57 @@ class ImageCard(QFrame):
 
         filename = self.image_data.get("filename", "Untitled.png")
         self.name_label = QLabel(filename)
-        self.name_label.setStyleSheet(
-            f"font-weight: 600; color: {c['text']}; "
-            f"font-size: 11px; background-color: transparent;"
-        )
         self.name_label.setWordWrap(False)
         labels_layout.addWidget(self.name_label)
 
         size = self.image_data.get("file_size")
         size_text = format_file_size(size) if size else "0 KB"
         ext = filename.split(".")[-1].upper() if "." in filename else "PNG"
-        meta_label = QLabel(f"{size_text} • {ext}")
-        meta_label.setStyleSheet(
-            f"color: {c['text_tertiary']}; font-size: 9px; "
-            "background-color: transparent;"
-        )
-        labels_layout.addWidget(meta_label)
+        self.meta_label = QLabel(f"{size_text} • {ext}")
+        labels_layout.addWidget(self.meta_label)
         info_layout.addLayout(labels_layout, 1)
 
         # Menu button
         self.menu_btn = QPushButton()
         self.menu_btn.setFixedSize(24, 24)
-        self.menu_btn.setIcon(load_icon("more_vert_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.menu_btn.setIconSize(QSize(24, 24))
+        self.menu_btn.clicked.connect(self._on_menu_clicked)
+        info_layout.addWidget(self.menu_btn)
+
+        layout.addWidget(self.info_section)
+
+        self._apply_style()
+
+    def _apply_style(self):
+        c = theme.c
+        self.setStyleSheet(styles.image_card())
+        self.preview_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['bg']};
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+                border-bottom-left-radius: 0px;
+                border-bottom-right-radius: 0px;
+            }}
+        """)
+        self.info_section.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['surface_alt']};
+                border-bottom-left-radius: 12px;
+                border-bottom-right-radius: 12px;
+                border-top-left-radius: 0px;
+                border-top-right-radius: 0px;
+            }}
+        """)
+        self.name_label.setStyleSheet(
+            f"font-weight: 600; color: {c['text']}; "
+            f"font-size: 11px; background-color: transparent;"
+        )
+        self.meta_label.setStyleSheet(
+            f"color: {c['text_tertiary']}; font-size: 9px; "
+            "background-color: transparent;"
+        )
+        self.menu_btn.setIcon(load_icon("more_vert_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.menu_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
@@ -744,10 +762,10 @@ class ImageCard(QFrame):
                 color: {c['primary']};
             }}
         """)
-        self.menu_btn.clicked.connect(self._on_menu_clicked)
-        info_layout.addWidget(self.menu_btn)
 
-        layout.addWidget(info_section)
+    def _on_theme_changed(self, _mode=None):
+        """Reload styles when theme changes."""
+        self._apply_style()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1026,20 +1044,8 @@ class DashboardWindow(QWidget):
         sidebar_layout.setContentsMargins(SPACE["md"], SPACE["md"], SPACE["md"], SPACE["md"])
         sidebar_layout.setSpacing(SPACE["sm"])
 
-        nav_title = QLabel("NAVIGATION")
-        nav_title.setStyleSheet(f"""
-            QLabel {{
-                font-size: 10px;
-                font-weight: 700;
-                color: {c['text_tertiary']};
-                letter-spacing: 2px;
-                background-color: transparent;
-                padding-left: {SPACE['sm']}px;
-                margin-top: {SPACE['sm']}px;
-                margin-bottom: {SPACE['sm']}px;
-            }}
-        """)
-        sidebar_layout.addWidget(nav_title)
+        self.nav_title = QLabel("NAVIGATION")
+        sidebar_layout.addWidget(self.nav_title)
 
         self.nav_new_folder = QPushButton("New Folder")
         self.nav_new_folder.setIcon(load_icon("add_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
@@ -1087,14 +1093,12 @@ class DashboardWindow(QWidget):
         sidebar_layout.addWidget(self.nav_settings)
 
         # User Info + Logout
-        user_frame = QFrame()
-        user_frame.setStyleSheet("background-color: transparent; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 8px;")
-        user_layout = QVBoxLayout(user_frame)
+        self.user_frame = QFrame()
+        user_layout = QVBoxLayout(self.user_frame)
         user_layout.setContentsMargins(0, SPACE["sm"], 0, 0)
         user_layout.setSpacing(SPACE["xs"])
 
         self.user_label = QLabel("Loading...")
-        self.user_label.setStyleSheet(f"color: {c['text_secondary']}; font-size: 11px; background-color: transparent;")
         user_layout.addWidget(self.user_label)
 
         self.logout_btn = QPushButton("Sign Out")
@@ -1102,23 +1106,8 @@ class DashboardWindow(QWidget):
         self.logout_btn.setIconSize(QSize(24, 24))
         self.logout_btn.setCursor(Qt.PointingHandCursor)
         self.logout_btn.clicked.connect(self._on_logout)
-        self.logout_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                color: {c['error']};
-                border: none;
-                padding: {SPACE['sm']}px {SPACE['sm']}px;
-                font-size: 12px;
-                text-align: left;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background-color: {c['hover']};
-                border-radius: 8px;
-            }}
-        """)
         user_layout.addWidget(self.logout_btn)
-        sidebar_layout.addWidget(user_frame)
+        sidebar_layout.addWidget(self.user_frame)
 
         split_layout.addWidget(self.sidebar)
 
@@ -1147,25 +1136,9 @@ class DashboardWindow(QWidget):
         title_layout.setContentsMargins(0, 0, 0, 0)
 
         self.header_title = QLabel("My Files")
-        self.header_title.setStyleSheet(f"""
-            QLabel {{
-                font-size: 20px;
-                font-weight: 700;
-                color: {c['text']};
-                background-color: transparent;
-            }}
-        """)
         title_layout.addWidget(self.header_title)
 
         self.header_subtitle = QLabel("Root / All Files")
-        self.header_subtitle.setStyleSheet(f"""
-            QLabel {{
-                font-size: 11px;
-                color: {c['text_tertiary']};
-                letter-spacing: 0.5px;
-                background-color: transparent;
-            }}
-        """)
         title_layout.addWidget(self.header_subtitle)
         header_layout.addLayout(title_layout)
 
@@ -1174,21 +1147,13 @@ class DashboardWindow(QWidget):
         # Search box in the header
         self.search_container = QFrame()
         self.search_container.setFixedWidth(220)
-        self.search_container.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['hover']};
-                border-radius: 8px;
-            }}
-        """)
         search_layout = QHBoxLayout(self.search_container)
         search_layout.setContentsMargins(SPACE["sm"], 0, SPACE["sm"], 0)
         search_layout.setSpacing(SPACE["xs"])
 
-        search_icon = QLabel()
-        search_pixmap = load_icon("search_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg").pixmap(16, 16)
-        search_icon.setPixmap(search_pixmap)
-        search_icon.setStyleSheet("background-color: transparent;")
-        search_layout.addWidget(search_icon)
+        self.search_icon = QLabel()
+        self.search_icon.setStyleSheet("background-color: transparent;")
+        search_layout.addWidget(self.search_icon)
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search files...")
@@ -1265,6 +1230,84 @@ class DashboardWindow(QWidget):
             }}
         """)
 
+        self.nav_title.setStyleSheet(f"""
+            QLabel {{
+                font-size: 10px;
+                font-weight: 700;
+                color: {c['text_tertiary']};
+                letter-spacing: 2px;
+                background-color: transparent;
+                padding-left: {SPACE['sm']}px;
+                margin-top: {SPACE['sm']}px;
+                margin-bottom: {SPACE['sm']}px;
+            }}
+        """)
+
+        self.user_frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: transparent;
+                border-top: 1px solid {c['border']};
+                padding-top: 8px;
+            }}
+        """)
+
+        self.logout_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {c['error']};
+                border: none;
+                padding: {SPACE['sm']}px {SPACE['sm']}px;
+                font-size: 12px;
+                text-align: left;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {c['hover']};
+                border-radius: 8px;
+            }}
+        """)
+
+        self.header_title.setStyleSheet(f"""
+            QLabel {{
+                font-size: 20px;
+                font-weight: 700;
+                color: {c['text']};
+                background-color: transparent;
+            }}
+        """)
+
+        self.header_subtitle.setStyleSheet(f"""
+            QLabel {{
+                font-size: 11px;
+                color: {c['text_tertiary']};
+                letter-spacing: 0.5px;
+                background-color: transparent;
+            }}
+        """)
+
+        self.top_refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                font-size: 14px;
+                border-radius: 14px;
+                color: {c['primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {c['hover']};
+            }}
+        """)
+
+        self.search_container.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['hover']};
+                border: none;
+                border-radius: 8px;
+            }}
+        """)
+        search_pixmap = load_icon("search_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg").pixmap(16, 16)
+        self.search_icon.setPixmap(search_pixmap)
+
     def _on_theme_toggle_clicked(self):
         theme.toggle()
         self.theme_btn.setIcon(load_icon(theme.is_dark and "dark_mode_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg" or "light_mode_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
@@ -1292,6 +1335,7 @@ class DashboardWindow(QWidget):
             }}
         """)
         self.theme_btn.setText("")
+        self.theme_btn.setIcon(load_icon(theme.is_dark and "dark_mode_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg" or "light_mode_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.app_title_label.setStyleSheet(f"""
             QLabel {{
                 font-size: 18px;
@@ -1300,15 +1344,18 @@ class DashboardWindow(QWidget):
                 background-color: transparent;
             }}
         """)
-        self.search_container.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['hover']};
-                border: none;
-                border-radius: 8px;
-            }}
-        """)
-        if self.active_nav == "settings":
-            self._on_nav_settings()
+        # Reload all navigation icons for theme change
+        self.top_refresh_btn.setIcon(load_icon("refresh_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.nav_new_folder.setIcon(load_icon("add_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.nav_new_snip.setIcon(load_icon("content_cut_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.nav_translate.setIcon(load_icon("translate_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.nav_all.setIcon(load_icon("allfiles_copy_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.nav_recent.setIcon(load_icon("recents_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.nav_settings.setIcon(load_icon("settings_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.logout_btn.setIcon(load_icon("logout_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        
+        # Re-render active view to recreate/style all dynamic controls with the new theme
+        self._restore_current_view()
 
     def _nav_button_style(self, active: bool) -> str:
         c = theme.c
@@ -1956,16 +2003,16 @@ class DashboardWindow(QWidget):
         c = theme.c
 
         # ── Page title ────────────────────────────────────────────────
-        page_title = QLabel("Settings")
-        page_title.setStyleSheet(
-            f"font-size: {FONT['display']['size']}px; "
-            f"font-weight: {FONT['display']['weight']}; "
-            f"color: {c['text']}; "
-            "background-color: transparent; "
-            "border: none;"
-        )
-        self.content_layout.addWidget(page_title)
-        self.content_layout.addSpacing(SPACE["md"])
+        # page_title = QLabel("Settings")
+        # page_title.setStyleSheet(
+        #     f"font-size: {FONT['display']['size']}px; "
+        #     f"font-weight: {FONT['display']['weight']}; "
+        #     f"color: {c['text']}; "
+        #     "background-color: transparent; "
+        #     "border: none;"
+        # )
+        # self.content_layout.addWidget(page_title)
+        # self.content_layout.addSpacing(SPACE["md"])
 
         # ── Appearance ────────────────────────────────────────────────
         self.content_layout.addWidget(self._section_header_label("", "Appearance"))

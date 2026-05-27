@@ -74,3 +74,4 @@ Thumbs.db
 # PyInstaller output
 dist/
 build/
+PACKAGING_PLAN.md

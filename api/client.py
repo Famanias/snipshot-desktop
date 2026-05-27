@@ -306,6 +306,11 @@ class APIClient:
             else:
                 return {"success": False, "error": "Failed to update image"}
     
+    def move_image_to_folder(self, image_id: int, filename: str = None, folder_id: int = None) -> Dict[str, Any]:
+        """Update image folder and/or filename. Alias for update_image."""
+        f_id = folder_id if folder_id != 0 else None
+        return self.update_image(image_id, filename=filename, folder_id=f_id)
+
     def delete_image(self, image_id: int) -> Dict[str, Any]:
         """Delete image"""
         with httpx.Client(timeout=30.0) as client:

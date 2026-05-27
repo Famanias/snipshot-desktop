@@ -347,6 +347,12 @@ class LocalAPIClient:
         finally:
             conn.close()
 
+    def move_image_to_folder(
+        self, image_id: int, filename: str = None, folder_id: int = None
+    ) -> Dict[str, Any]:
+        """Update image folder and/or filename. Alias for update_image."""
+        return self.update_image(image_id, filename=filename, folder_id=folder_id)
+
     def delete_image(self, image_id: int) -> Dict[str, Any]:
         conn = db.get_connection()
         try:

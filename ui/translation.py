@@ -272,7 +272,8 @@ class TranslationWindow(QDialog):
         try:
             result = api_client.get_folders()
             if result["success"]:
-                self.folders = result["data"].get("folders", [])
+                data = result["data"]
+                self.folders = data if isinstance(data, list) else data.get("folders", [])
                 for folder in self.folders:
                     self.folder_selector.addItem(
                         f"\U0001F4C1 {folder['name']}", folder["id"]

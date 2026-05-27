@@ -476,7 +476,7 @@ class SupabaseAPIClient:
         try:
             updates = {}
             if folder_id is not None:
-                updates["folder_id"] = folder_id
+                updates["folder_id"] = folder_id if folder_id != 0 else None
             if filename is not None:
                 updates["filename"] = filename           # what the UI displays
                 updates["original_filename"] = filename  # keep both in sync

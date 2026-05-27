@@ -717,7 +717,7 @@ def load_icon(icon_name: str) -> QIcon:
         A QIcon object, or empty QIcon if file not found
     """
     from .theme import theme
-    icon_dir = os.path.dirname(os.path.abspath(__file__))
+    from utils.helpers import resource_path
     
     # Normalize the icon name based on current theme
     if theme.is_dark:
@@ -729,13 +729,7 @@ def load_icon(icon_name: str) -> QIcon:
         if "E3E3E3" in icon_name:
             icon_name = icon_name.replace("E3E3E3", "212121")
     
-    icon_path = os.path.join(icon_dir, "icons", icon_name)
-    
-    if os.path.exists(icon_path):
-        return QIcon(icon_path)
-    else:
-        print(f"Warning: Icon not found at {icon_path}")
-        return QIcon()
+    icon_path = resource_path(os.path.join("ui", "icons", icon_name))
     
     if os.path.exists(icon_path):
         return QIcon(icon_path)

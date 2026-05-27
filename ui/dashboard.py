@@ -1042,20 +1042,20 @@ class DashboardWindow(QWidget):
         sidebar_layout.addWidget(nav_title)
 
         self.nav_new_folder = QPushButton("New Folder")
-        self.nav_new_folder.setIcon(load_icon("folder_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.nav_new_folder.setIcon(load_icon("add_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.nav_new_folder.setIconSize(QSize(24, 24))
         self.nav_new_folder.setCursor(Qt.PointingHandCursor)
         self.nav_new_folder.clicked.connect(self._on_new_folder)
         sidebar_layout.addWidget(self.nav_new_folder)
 
-        self.nav_new_snip = QPushButton("New Snip")
+        self.nav_new_snip = QPushButton("Snip Translate")
         self.nav_new_snip.setIcon(load_icon("content_cut_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.nav_new_snip.setIconSize(QSize(24, 24))
         self.nav_new_snip.setCursor(Qt.PointingHandCursor)
         self.nav_new_snip.clicked.connect(self._on_snip)
         sidebar_layout.addWidget(self.nav_new_snip)
 
-        self.nav_translate = QPushButton("Translate")
+        self.nav_translate = QPushButton("Translate via Upload")
         self.nav_translate.setIcon(load_icon("translate_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.nav_translate.setIconSize(QSize(24, 24))
         self.nav_translate.setCursor(Qt.PointingHandCursor)
@@ -1291,7 +1291,7 @@ class DashboardWindow(QWidget):
                 background-color: {c['hover']};
             }}
         """)
-        self.theme_btn.setText(theme.is_dark and "🌙" or "☀️")
+        self.theme_btn.setText("")
         self.app_title_label.setStyleSheet(f"""
             QLabel {{
                 font-size: 18px;
@@ -1303,7 +1303,7 @@ class DashboardWindow(QWidget):
         self.search_container.setStyleSheet(f"""
             QFrame {{
                 background-color: {c['hover']};
-                border: 1px solid {c['border']};
+                border: none;
                 border-radius: 8px;
             }}
         """)
@@ -1528,9 +1528,13 @@ class DashboardWindow(QWidget):
         self.header_subtitle.setText(f"Root / Folders / {folder_name}")
         self._clear_content()
 
-        back_btn = StyledButton("← Back to My Files", variant="ghost")
+        back_btn = StyledButton("", variant="ghost")
+        back_btn.setIcon(load_icon("keyboard_backspace_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        back_btn.setIconSize(QSize(24, 24))
+        back_btn.setToolTip("Back to My Files")
+        back_btn.setMaximumWidth(50)
         back_btn.clicked.connect(self._on_nav_all)
-        self.content_layout.addWidget(back_btn)
+        self.content_layout.addWidget(back_btn, alignment=Qt.AlignLeft)
 
         folder_images = [img for img in self._cached_images if img.get("folder_id") == folder_id]
 
@@ -2476,4 +2480,4 @@ class DashboardWindow(QWidget):
         self._cancel_worker("search_worker")
         self._cancel_worker("cache_loader_worker")
         self._cancel_worker("cache_update_worker")
-        event.accept()
+        event.accept()

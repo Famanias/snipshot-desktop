@@ -21,7 +21,7 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 # API Endpoints
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
 TRANSLATOR_URL = os.getenv("TRANSLATOR_URL", "http://localhost:8001")
-LOCAL_TRANSLATOR_URL = "http://192.168.100.22:8001"
+LOCAL_TRANSLATOR_URL = "http://192.168.100.230:8001"
 
 # Translation settings (must match snipshot-backend config enums)
 TRANSLATION_TARGET_LANG = os.getenv("TRANSLATION_TARGET_LANG", "ENG").upper()

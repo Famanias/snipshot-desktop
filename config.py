@@ -17,8 +17,8 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6
 
 # API Endpoints
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
-TRANSLATOR_URL = os.getenv("TRANSLATOR_URL", "https://snipshot-backend.agreeableglacier-1913eef7.eastasia.azurecontainerapps.io")
-LOCAL_TRANSLATOR_URL = "http://192.168.100.230:8001"
+TRANSLATOR_URL = os.getenv("TRANSLATOR_URL", "https://snipshot-snipshot-backend.hf.space")
+LOCAL_TRANSLATOR_URL = "http:localhost:8001"
 
 # Translation settings (must match snipshot-backend config enums)
 TRANSLATION_TARGET_LANG = os.getenv("TRANSLATION_TARGET_LANG", "ENG").upper()

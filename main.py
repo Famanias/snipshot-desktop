@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
                 f"Could not connect to the local translator backend at {LOCAL_TRANSLATOR_URL}.\n\n"
                 "Please make sure your local backend repository is running before using Offline Mode.\n\n"
                 "To launch it, open a terminal and run:\n"
-                "  cd C:\\Users\\neilc\\OneDrive\\Documents\\GitHub\\snipshot-backend\n"
+                "  cd C:\\Users\\your-username\\snipshot-backend\n"
                 "  python main.py\n\n"
                 f"Details: {error_msg}"
             )

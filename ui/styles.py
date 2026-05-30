@@ -465,6 +465,10 @@ def folder_card():
             background-color: {c['hover']};
             border-color: {c['primary']};
         }}
+        FolderCard[dragOver="true"] {{
+            background-color: {c['primary_light']};
+            border: 2px dashed {c['primary']};
+        }}
     """
 
 

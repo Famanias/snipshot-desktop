@@ -521,6 +521,7 @@ class FolderCard(QFrame):
     clicked = pyqtSignal(int, str)
     delete_requested = pyqtSignal(int, str)
     rename_requested = pyqtSignal(int, str)
+    image_dropped = pyqtSignal(int, int)
 
     def __init__(self, folder_data: dict, parent=None):
         super().__init__(parent)
@@ -528,8 +529,49 @@ class FolderCard(QFrame):
         self.folder_name = folder_data["name"]
         self.image_count = folder_data.get("image_count", 0)
         self.setCursor(Qt.PointingHandCursor)
+        self.setAcceptDrops(True)
         self._setup_ui()
         theme.theme_changed.connect(self._on_theme_changed)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-snipshot-image-id"):
+            event.acceptProposedAction()
+            self.setProperty("dragOver", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            self.update()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-snipshot-image-id"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+    def dropEvent(self, event):
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+        
+        mime_data = event.mimeData()
+        if mime_data.hasFormat("application/x-snipshot-image-id"):
+            image_id_str = mime_data.data("application/x-snipshot-image-id").data().decode('utf-8')
+            try:
+                image_id = int(image_id_str)
+                self.image_dropped.emit(self.folder_id, image_id)
+                event.acceptProposedAction()
+            except ValueError:
+                event.ignore()
+        else:
+            event.ignore()
 
     def _setup_ui(self):
         self.setFixedSize(200, 140)
@@ -624,9 +666,47 @@ class FolderCard(QFrame):
         if event.button() == Qt.LeftButton:
             if self.menu_btn.rect().contains(self.menu_btn.mapFrom(self, event.pos())):
                 return
-            self.clicked.emit(self.folder_id, self.folder_name)
+            self.drag_start_position = event.pos()
         elif event.button() == Qt.RightButton:
             self._show_context_menu(event.globalPos())
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton):
+            return
+        if not hasattr(self, "drag_start_position"):
+            return
+        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+            return
+
+        self._start_drag(event)
+
+    def _start_drag(self, event):
+        from PyQt5.QtGui import QDrag
+        from PyQt5.QtCore import QMimeData, QByteArray
+
+        mime_data = QMimeData()
+        folder_id_str = str(self.folder_id)
+        mime_data.setText(folder_id_str)
+        mime_data.setData("application/x-snipshot-folder-id", QByteArray(folder_id_str.encode('utf-8')))
+
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+
+        # Grab a scaled visual preview of the folder card for the drag icon
+        pixmap = self.grab()
+        drag.setPixmap(pixmap.scaled(120, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        drag.setHotSpot(self.drag_start_position)
+
+        drag.exec_(Qt.MoveAction)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if hasattr(self, "drag_start_position"):
+                # If released without dragging, trigger open folder (click)
+                if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+                    self.clicked.emit(self.folder_id, self.folder_name)
+                del self.drag_start_position
+        super().mouseReleaseEvent(event)
 
     def _on_menu_clicked(self):
         self._show_context_menu(QCursor.pos())
@@ -771,9 +851,49 @@ class ImageCard(QFrame):
         if event.button() == Qt.LeftButton:
             if self.menu_btn.rect().contains(self.menu_btn.mapFrom(self, event.pos())):
                 return
-            self.clicked.emit(self.image_data)
+            self.drag_start_position = event.pos()
         elif event.button() == Qt.RightButton:
             self._show_context_menu(event.globalPos())
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton):
+            return
+        if not hasattr(self, "drag_start_position"):
+            return
+        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+            return
+
+        # Limit drag and drop to unfiled images
+        if self.image_data.get("folder_id") is None:
+            self._start_drag(event)
+
+    def _start_drag(self, event):
+        from PyQt5.QtGui import QDrag
+        from PyQt5.QtCore import QMimeData, QByteArray
+
+        mime_data = QMimeData()
+        image_id_str = str(self.image_data["id"])
+        mime_data.setText(image_id_str)
+        mime_data.setData("application/x-snipshot-image-id", QByteArray(image_id_str.encode('utf-8')))
+
+        drag = QDrag(self)
+        drag.setMimeData(mime_data)
+
+        # Create a visually pleasing thumbnail of the image card for the drag action
+        pixmap = self.grab()
+        drag.setPixmap(pixmap.scaled(120, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        drag.setHotSpot(self.drag_start_position)
+
+        drag.exec_(Qt.MoveAction)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if hasattr(self, "drag_start_position"):
+                # If released without crossing the drag threshold, trigger click (view preview)
+                if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+                    self.clicked.emit(self.image_data)
+                del self.drag_start_position
+        super().mouseReleaseEvent(event)
 
     def _on_menu_clicked(self):
         self._show_context_menu(QCursor.pos())
@@ -875,6 +995,113 @@ class _ShortcutButton(QPushButton):
             self.style().polish(self)
             self.setText("Change\u2026")
         super().focusOutEvent(event)
+
+
+class TrashDropZone(QFrame):
+    """
+    A persistent floating trash/delete drop zone widget anchored to the bottom-right.
+    Accepts drop events for both folders and images and handles deletion.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._is_drag_over = False
+        self._setup_ui()
+        theme.theme_changed.connect(self._on_theme_changed)
+
+    def _setup_ui(self):
+        self.setFixedSize(64, 64)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setAlignment(Qt.AlignCenter)
+
+        self.icon_label = QLabel()
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        self.icon_label.setStyleSheet("background-color: transparent;")
+        layout.addWidget(self.icon_label)
+
+        self.setToolTip("Drag here to delete permanently")
+        self._apply_style()
+
+    def _apply_style(self):
+        c = theme.c
+        icon_color_suffix = "E3E3E3" if theme.is_dark else "212121"
+        icon_name = f"delete_24dp_{icon_color_suffix}_FILL0_wght400_GRAD0_opsz24.svg"
+
+        if self._is_drag_over:
+            bg_color = "#3B1C1C" if theme.is_dark else "#FEF2F2"
+            icon_pixmap = load_icon(icon_name).pixmap(32, 32)
+            self.setFixedSize(72, 72)
+        else:
+            bg_color = c["surface_alt"]
+            icon_pixmap = load_icon(icon_name).pixmap(24, 24)
+            self.setFixedSize(64, 64)
+
+        self.icon_label.setPixmap(icon_pixmap)
+
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg_color};
+                border: none;
+                border-radius: {self.width() // 2}px;
+            }}
+        """)
+        apply_card_shadow(self)
+
+        # Reposition parent if parent is DashboardWindow
+        if hasattr(self.parent(), "_reposition_trash_drop_zone"):
+            self.parent()._reposition_trash_drop_zone()
+
+    def _on_theme_changed(self, _mode=None):
+        self._apply_style()
+
+    def dragEnterEvent(self, event):
+        mime_data = event.mimeData()
+        if mime_data.hasFormat("application/x-snipshot-image-id") or mime_data.hasFormat("application/x-snipshot-folder-id"):
+            event.acceptProposedAction()
+            self._is_drag_over = True
+            self._apply_style()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        mime_data = event.mimeData()
+        if mime_data.hasFormat("application/x-snipshot-image-id") or mime_data.hasFormat("application/x-snipshot-folder-id"):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._is_drag_over = False
+        self._apply_style()
+
+    def dropEvent(self, event):
+        self._is_drag_over = False
+        self._apply_style()
+
+        mime_data = event.mimeData()
+        if mime_data.hasFormat("application/x-snipshot-image-id"):
+            image_id_str = mime_data.data("application/x-snipshot-image-id").data().decode('utf-8')
+            try:
+                image_id = int(image_id_str)
+                if hasattr(self.parent(), "_delete_image_dropped"):
+                    self.parent()._delete_image_dropped(image_id)
+                event.acceptProposedAction()
+            except ValueError:
+                event.ignore()
+        elif mime_data.hasFormat("application/x-snipshot-folder-id"):
+            folder_id_str = mime_data.data("application/x-snipshot-folder-id").data().decode('utf-8')
+            try:
+                folder_id = int(folder_id_str)
+                if hasattr(self.parent(), "_delete_folder_dropped"):
+                    self.parent()._delete_folder_dropped(folder_id)
+                event.acceptProposedAction()
+            except ValueError:
+                event.ignore()
+        else:
+            event.ignore()
 
 
 class DashboardWindow(QWidget):
@@ -1203,6 +1430,10 @@ class DashboardWindow(QWidget):
         self.new_folder_btn.hide()
         self.refresh_btn = QPushButton()
         self.refresh_btn.hide()
+
+        # Create floating Trash Drop Zone
+        self.trash_drop_zone = TrashDropZone(self)
+        self.trash_drop_zone.show()
 
         self._apply_styles()
 
@@ -1538,6 +1769,7 @@ class DashboardWindow(QWidget):
                 card.clicked.connect(self._on_folder_clicked)
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
+                card.image_dropped.connect(self._on_image_dropped)
                 folder_grid_layout.addWidget(card)
 
             self.content_layout.addWidget(folder_grid)
@@ -1849,6 +2081,7 @@ class DashboardWindow(QWidget):
                 card.clicked.connect(self._on_folder_clicked)
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
+                card.image_dropped.connect(self._on_image_dropped)
                 folder_grid_layout.addWidget(card)
             self.content_layout.addWidget(folder_grid)
 
@@ -2517,6 +2750,81 @@ class DashboardWindow(QWidget):
                 QMessageBox.warning(
                     self, "Error", result.get("error", "Failed to move image")
                 )
+
+    def _on_image_dropped(self, folder_id: int, image_id: int):
+        if getattr(self, "_is_moving_image", False):
+            return
+        self._is_moving_image = True
+
+        # Validate that the drop target is a valid folder
+        valid_folder = any(f["id"] == folder_id for f in self._cached_folders)
+        if not valid_folder:
+            self._is_moving_image = False
+            return
+
+        # Show busy feedback
+        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+
+        try:
+            result = self.api_client.move_image_to_folder(image_id, folder_id=folder_id)
+            if result.get("success"):
+                self.refresh()
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Move Failed",
+                    result.get("error", "Failed to move the image to the folder.")
+                )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"An error occurred while moving the image: {str(e)}"
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._is_moving_image = False
+
+    def _delete_image_dropped(self, image_id: int):
+        if getattr(self, "_is_deleting_item", False):
+            return
+        self._is_deleting_item = True
+        try:
+            self._on_delete_image(image_id)
+        finally:
+            self._is_deleting_item = False
+
+    def _delete_folder_dropped(self, folder_id: int):
+        if getattr(self, "_is_deleting_item", False):
+            return
+        self._is_deleting_item = True
+        try:
+            folder_name = "Folder"
+            for f in self._cached_folders:
+                if f["id"] == folder_id:
+                    folder_name = f["name"]
+                    break
+            self._on_delete_folder(folder_id, folder_name)
+        finally:
+            self._is_deleting_item = False
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reposition_trash_drop_zone()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._reposition_trash_drop_zone()
+
+    def _reposition_trash_drop_zone(self):
+        if hasattr(self, "trash_drop_zone") and self.trash_drop_zone is not None:
+            margin_right = 24
+            margin_bottom = 24
+            trash_w = self.trash_drop_zone.width()
+            trash_h = self.trash_drop_zone.height()
+            new_x = self.width() - trash_w - margin_right
+            new_y = self.height() - trash_h - margin_bottom
+            self.trash_drop_zone.move(new_x, new_y)
 
     def _on_logout(self):
         api_client.logout()

@@ -18,7 +18,7 @@ SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6
 # API Endpoints
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
 TRANSLATOR_URL = os.getenv("TRANSLATOR_URL", "https://snipshot-snipshot-backend.hf.space")
-LOCAL_TRANSLATOR_URL = "http:localhost:8001"
+LOCAL_TRANSLATOR_URL = "http://localhost:8001"
 
 # Translation settings (must match snipshot-backend config enums)
 TRANSLATION_TARGET_LANG = os.getenv("TRANSLATION_TARGET_LANG", "ENG").upper()

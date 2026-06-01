@@ -294,7 +294,9 @@ class MainWindow(QMainWindow):
     
     def _start_capture(self):
         """Start screen capture"""
-        # Ignore if not logged in or a capture is already in progress
+        # Ignore if not logged in, not on the dashboard, or a capture is already in progress
+        if self.stack.currentWidget() != self.dashboard:
+            return
         if not api_client.is_authenticated:
             return
         if self.capture_widget is not None and self.capture_widget.isVisible():

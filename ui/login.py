@@ -22,8 +22,10 @@ from PyQt5.QtWidgets import (
     QLineEdit, QPushButton, QFrame, QSizePolicy,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QIcon
 
 from api import api_client
+from utils import resource_path
 from .theme import theme
 from . import styles
 from .styles import SPACE, FONT, apply_card_shadow
@@ -72,13 +74,6 @@ class LoginWindow(QWidget):
         self.title_label.setAlignment(Qt.AlignCenter)
         cl.addWidget(self.title_label)
 
-        # App description
-        self.desc_label = QLabel("Translate manga and text from screenshots instantly")
-        self.desc_label.setAlignment(Qt.AlignCenter)
-        self.desc_label.setWordWrap(True)
-        self.desc_label.setMaximumWidth(320)
-        cl.addWidget(self.desc_label, alignment=Qt.AlignCenter)
-
         # Subtitle
         self.subtitle_label = QLabel("Sign in to your account")
         self.subtitle_label.setAlignment(Qt.AlignCenter)
@@ -106,6 +101,28 @@ class LoginWindow(QWidget):
         self.password_input.setEchoMode(QLineEdit.Password)
         self.password_input.setMinimumHeight(44)
         self.password_input.returnPressed.connect(self._on_login)
+
+        # Password visibility toggle button
+        self.toggle_password_btn = QPushButton(self.password_input)
+        self.toggle_password_btn.setCursor(Qt.PointingHandCursor)
+        self.toggle_password_btn.setFixedSize(24, 24)
+        self.toggle_password_btn.setFocusPolicy(Qt.NoFocus)
+        self.toggle_password_btn.setStyleSheet(
+            "background: transparent; border: none; padding: 0; min-height: 0; min-width: 0;"
+        )
+
+        self.visible_icon_path = resource_path("ui/icons/visibility_24dp_999999_FILL0_wght400_GRAD0_opsz24.svg")
+        self.hidden_icon_path = resource_path("ui/icons/visibility_off_24dp_999999_FILL0_wght400_GRAD0_opsz24.svg")
+        self.toggle_password_btn.setIcon(QIcon(self.hidden_icon_path))
+        self.toggle_password_btn.clicked.connect(self._toggle_password_visibility)
+
+        # Place button inside password input (aligned to right)
+        pw_layout = QHBoxLayout(self.password_input)
+        pw_layout.setContentsMargins(0, 0, SPACE["sm"], 0)
+        pw_layout.addStretch()
+        pw_layout.addWidget(self.toggle_password_btn)
+        self.password_input.setLayout(pw_layout)
+
         cl.addWidget(self.password_input)
 
         # Error label — pre-allocated, hidden via setVisible
@@ -125,18 +142,16 @@ class LoginWindow(QWidget):
         cl.addSpacing(SPACE["md"])
 
         # Divider
-        divider_layout = QHBoxLayout()
-        self.line1 = QFrame()
-        self.line1.setFrameShape(QFrame.HLine)
-        divider_layout.addWidget(self.line1)
-        divider_layout.addStretch()
-        self.or_label = QLabel("or")
-        divider_layout.addWidget(self.or_label)
-        divider_layout.addStretch()
-        self.line2 = QFrame()
-        self.line2.setFrameShape(QFrame.HLine)
-        divider_layout.addWidget(self.line2)
-        cl.addLayout(divider_layout)
+        # divider_layout = QHBoxLayout()
+        # self.line1 = QFrame()
+        # self.line1.setFrameShape(QFrame.HLine)
+        # divider_layout.addWidget(self.line1)
+        # divider_layout.addStretch()
+        # divider_layout.addStretch()
+        # self.line2 = QFrame()
+        # self.line2.setFrameShape(QFrame.HLine)
+        # divider_layout.addWidget(self.line2)
+        # cl.addLayout(divider_layout)
 
         cl.addSpacing(SPACE["sm"])
 
@@ -176,10 +191,6 @@ class LoginWindow(QWidget):
             f"color: {c['primary']}; background-color: transparent; "
             f"padding: {SPACE['xs']}px 0 {SPACE['sm']}px 0; min-height: 52px;"
         )
-        self.desc_label.setStyleSheet(
-            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
-            "background-color: transparent;"
-        )
         self.subtitle_label.setStyleSheet(
             f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
             "background-color: transparent;"
@@ -190,18 +201,28 @@ class LoginWindow(QWidget):
                 f"color: {c['text']}; margin-bottom: {SPACE['xs']}px; background-color: transparent;"
             )
         self.email_input.setStyleSheet(styles.input_field())
-        self.password_input.setStyleSheet(styles.input_field())
+        
+        # Override padding-right to avoid password text overlapping the toggle button
+        pw_padding_right = SPACE["xl"] + SPACE["xs"]  # 32 + 4 = 36px
+        pw_padding_right_focus = pw_padding_right - 1  # 35px
+        self.password_input.setStyleSheet(
+            styles.input_field() + f"""
+            QLineEdit {{
+                padding-right: {pw_padding_right}px;
+            }}
+            QLineEdit:focus {{
+                padding-right: {pw_padding_right_focus}px;
+            }}
+            """
+        )
         self.error_label.setStyleSheet(
             f"color: {c['error']}; font-size: {FONT['caption']['size']}px; "
             f"background-color: {c['error_bg']}; "
             f"border-left: 3px solid {c['error']}; "
             f"border-radius: 6px; padding: {SPACE['sm']}px {SPACE['md']}px;"
         )
-        self.line1.setStyleSheet(f"background-color: {c['border']}; color: {c['border']};")
-        self.line2.setStyleSheet(f"background-color: {c['border']}; color: {c['border']};")
-        self.or_label.setStyleSheet(
-            f"color: {c['text_secondary']}; padding: 0 {SPACE['sm']}px; background-color: transparent;"
-        )
+        # self.line1.setStyleSheet(f"background-color: {c['border']}; color: {c['border']};")
+        # self.line2.setStyleSheet(f"background-color: {c['border']}; color: {c['border']};")
         self.local_hint_label.setStyleSheet(
             f"color: {c['text_tertiary']}; font-size: {FONT['hint']['size']}px; "
             "background-color: transparent;"
@@ -242,7 +263,17 @@ class LoginWindow(QWidget):
     def _on_offline_mode(self):
         self.offline_mode_requested.emit()
 
+    def _toggle_password_visibility(self):
+        if self.password_input.echoMode() == QLineEdit.Password:
+            self.password_input.setEchoMode(QLineEdit.Normal)
+            self.toggle_password_btn.setIcon(QIcon(self.visible_icon_path))
+        else:
+            self.password_input.setEchoMode(QLineEdit.Password)
+            self.toggle_password_btn.setIcon(QIcon(self.hidden_icon_path))
+
     def clear_fields(self):
         self.email_input.clear()
         self.password_input.clear()
+        self.password_input.setEchoMode(QLineEdit.Password)
+        self.toggle_password_btn.setIcon(QIcon(self.hidden_icon_path))
         self.error_label.setVisible(False)

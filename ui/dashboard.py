@@ -1653,6 +1653,16 @@ class DashboardWindow(QWidget):
         else:
             self._load_all_files_async()
 
+    def _reconcile_folder_counts(self):
+        """Recompute folder image counts from the local image cache."""
+        counts = {}
+        for img in self._cached_images:
+            fid = img.get("folder_id")
+            if fid is not None:
+                counts[fid] = counts.get(fid, 0) + 1
+        for folder in self._cached_folders:
+            folder["image_count"] = counts.get(folder["id"], 0)
+
     def _clear_content(self):
         def clear_layout(layout):
             if layout is None:
@@ -2648,7 +2658,11 @@ class DashboardWindow(QWidget):
             if name:
                 result = api_client.create_folder(name, description)
                 if result.get("success"):
-                    self.refresh()
+                    new_folder = result.get("data")
+                    if new_folder:
+                        new_folder["image_count"] = 0
+                        self._cached_folders.insert(0, new_folder)
+                        self._restore_current_view()
                 else:
                     QMessageBox.warning(
                         self,
@@ -2671,15 +2685,33 @@ class DashboardWindow(QWidget):
         msg.exec_()
 
         clicked = msg.clickedButton()
+        delete_images = False
         if clicked == keep_btn:
-            result = api_client.delete_folder(folder_id, delete_images=False)
+            delete_images = False
         elif clicked == delete_all_btn:
-            result = api_client.delete_folder(folder_id, delete_images=True)
+            delete_images = True
         else:
             return
 
+        result = api_client.delete_folder(folder_id, delete_images=delete_images)
+
         if result.get("success"):
-            self.refresh()
+            # Update local cache
+            self._cached_folders = [f for f in self._cached_folders if f["id"] != folder_id]
+            if delete_images:
+                # Remove all images inside this folder
+                self._cached_images = [img for img in self._cached_images if img.get("folder_id") != folder_id]
+            else:
+                # Set folder_id to None for all images inside this folder
+                for img in self._cached_images:
+                    if img.get("folder_id") == folder_id:
+                        img["folder_id"] = None
+            
+            # If current view was the deleted folder, navigate back to root/all
+            if self._current_view == "folder" and self._current_folder_id == folder_id:
+                self._on_nav_all()
+            else:
+                self._restore_current_view()
         else:
             QMessageBox.warning(self, "Error", "Failed to delete folder")
 
@@ -2690,7 +2722,16 @@ class DashboardWindow(QWidget):
         if ok and new_name and new_name != current_name:
             result = api_client.update_folder(folder_id, name=new_name)
             if result.get("success"):
-                self.refresh()
+                # Update local cache
+                for f in self._cached_folders:
+                    if f["id"] == folder_id:
+                        f["name"] = new_name
+                        break
+                # If currently viewing this folder, update title
+                if self._current_view == "folder" and self._current_folder_id == folder_id:
+                    self._current_folder_name = new_name
+                    self.current_folder_name = new_name
+                self._restore_current_view()
             else:
                 QMessageBox.warning(
                     self, "Error", result.get("error", "Failed to rename folder")

@@ -31,7 +31,7 @@ LOCAL_STORAGE_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), 
 
 # App Settings
 APP_NAME = "SnipShot"
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.1"
 
 # Default translation config — mirrors test.py test_local_translate defaults
 DEFAULT_TRANSLATION_CONFIG = {

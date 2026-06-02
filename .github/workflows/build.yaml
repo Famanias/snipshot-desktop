@@ -9,7 +9,6 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  
 
 jobs:
   build:
@@ -26,10 +25,44 @@ jobs:
       - name: Install dependencies
         run: pip install pyinstaller -r requirements.txt
 
-      - name: Build executable
-        run: pyinstaller --onefile --windowed main.py
+      - name: Build executable directory
+        run: |
+          pyinstaller `
+            --name SnipShot `
+            --onedir `
+            --windowed `
+            --icon "resources/icon.ico" `
+            --add-data "ui/icons;ui/icons" `
+            --add-data "resources;resources" `
+            --hidden-import PyQt5.sip `
+            --hidden-import keyring.backends.Windows `
+            --hidden-import supabase `
+            --hidden-import gotrue `
+            --hidden-import postgrest `
+            --hidden-import storage3 `
+            --hidden-import realtime `
+            --hidden-import supafunc `
+            --hidden-import httpx `
+            --hidden-import httpcore `
+            --hidden-import h11 `
+            --hidden-import anyio `
+            --hidden-import sniffio `
+            --hidden-import certifi `
+            --hidden-import platformdirs `
+            --hidden-import cryptography `
+            --hidden-import local_api `
+            --hidden-import local_api.client `
+            --hidden-import local_api.database `
+            --hidden-import local_api.storage `
+            main.py
 
-      - name: Upload to Release
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Compile installer
+        run: & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Upload installer to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: installer/SnipShot_Setup_*.exe

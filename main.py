@@ -329,7 +329,7 @@ class MainWindow(QMainWindow):
             target_language=self.dashboard.get_target_language(),
             translation_config=self.dashboard.get_translation_config(),
         )
-        self.translation_window.saved.connect(self.dashboard.refresh)
+        self.translation_window.saved.connect(self.dashboard.add_saved_image)
         self.translation_window.exec_()
 
     def _on_capture_cancelled(self):
@@ -354,7 +354,7 @@ class MainWindow(QMainWindow):
             target_language=self.dashboard.get_target_language(),
             translation_config=self.dashboard.get_translation_config(),
         )
-        self.translation_window.saved.connect(self.dashboard.refresh)
+        self.translation_window.saved.connect(self.dashboard.add_saved_image)
         self.translation_window.exec_()
 
 

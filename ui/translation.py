@@ -111,7 +111,7 @@ class TranslationWindow(QDialog):
     Displays progress, result, and save options.
     """
 
-    saved = pyqtSignal()
+    saved = pyqtSignal(dict)
 
     def __init__(
         self,
@@ -388,7 +388,7 @@ class TranslationWindow(QDialog):
         )
 
         self.save_btn.setText("Saved!")
-        self.saved.emit()
+        self.saved.emit(data)
 
         from PyQt5.QtCore import QTimer
 

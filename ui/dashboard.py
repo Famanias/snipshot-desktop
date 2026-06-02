@@ -35,6 +35,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox,
     QLayout, QSpinBox, QDoubleSpinBox, QSlider,
 )
+from typing import Optional
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread, QRect, QPoint
 from PyQt5.QtGui import QIcon, QPixmap, QCursor, QFont, QKeySequence, QCloseEvent
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -732,14 +733,15 @@ class FolderCard(QFrame):
 class ImageCard(QFrame):
     """A card widget representing an image"""
 
-    clicked = pyqtSignal(dict)
+    clicked = pyqtSignal(int)
     delete_requested = pyqtSignal(int)
-    rename_requested = pyqtSignal(dict)
-    move_requested = pyqtSignal(dict)
+    rename_requested = pyqtSignal(int)
+    move_requested = pyqtSignal(int)
 
     def __init__(self, image_data: dict, parent=None):
         super().__init__(parent)
         self.image_data = image_data
+        self.image_id = image_data["id"]
         self.setCursor(Qt.PointingHandCursor)
         self._setup_ui()
         theme.theme_changed.connect(self._on_theme_changed)
@@ -891,7 +893,7 @@ class ImageCard(QFrame):
             if hasattr(self, "drag_start_position"):
                 # If released without crossing the drag threshold, trigger click (view preview)
                 if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
-                    self.clicked.emit(self.image_data)
+                    self.clicked.emit(self.image_id)
                 del self.drag_start_position
         super().mouseReleaseEvent(event)
 
@@ -901,19 +903,19 @@ class ImageCard(QFrame):
     def _show_context_menu(self, pos):
         menu = QMenu(self)
         open_action = menu.addAction("View")
-        open_action.triggered.connect(lambda: self.clicked.emit(self.image_data))
+        open_action.triggered.connect(lambda: self.clicked.emit(self.image_id))
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(
-            lambda: self.rename_requested.emit(self.image_data)
+            lambda: self.rename_requested.emit(self.image_id)
         )
         move_action = menu.addAction("Move to Folder")
         move_action.triggered.connect(
-            lambda: self.move_requested.emit(self.image_data)
+            lambda: self.move_requested.emit(self.image_id)
         )
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
         delete_action.triggered.connect(
-            lambda: self.delete_requested.emit(self.image_data["id"])
+            lambda: self.delete_requested.emit(self.image_id)
         )
         menu.exec_(pos)
 
@@ -1146,12 +1148,17 @@ class DashboardWindow(QWidget):
         self.api_client = api_client
         self._cached_folders = []
         self._cached_images = []
+        self._folder_cards = {}
+        self._image_cards = {}
         self._current_view = "root"        # "root" | "folder" | "recent"
         self._current_folder_id = None
         self._current_folder_name = ""
         self.search_worker = None
         self.cache_loader_worker = None
         self.cache_update_worker = None
+        self.folder_grid = None
+        self.folder_grid_layout = None
+        self._image_grid_widget = None
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -1654,14 +1661,161 @@ class DashboardWindow(QWidget):
             self._load_all_files_async()
 
     def _reconcile_folder_counts(self):
-        """Recompute folder image counts from the local image cache."""
+        """Recompute folder image counts from the local image cache and update visible card labels."""
         counts = {}
         for img in self._cached_images:
             fid = img.get("folder_id")
             if fid is not None:
                 counts[fid] = counts.get(fid, 0) + 1
         for folder in self._cached_folders:
-            folder["image_count"] = counts.get(folder["id"], 0)
+            new_count = counts.get(folder["id"], 0)
+            folder["image_count"] = new_count
+            
+            # Update the visible widget count label directly
+            card = self._folder_cards.get(folder["id"])
+            if card:
+                card.image_count = new_count
+                image_label_text = "image" if new_count == 1 else "images"
+                card.count_label.setText(f"{new_count} {image_label_text}")
+
+    def _get_cached_image(self, image_id: int) -> Optional[dict]:
+        """Resolve a dictionary reference from the images cache by ID."""
+        for img in self._cached_images:
+            if img.get("id") == image_id:
+                return img
+        return None
+
+    def _add_folder_card_widget(self, folder: dict):
+        """Create and prepend a FolderCard widget directly to the grid layout."""
+        if self._current_view != "root" or not getattr(self, "folder_grid_layout", None):
+            self._restore_current_view()
+            return
+
+        card = FolderCard(folder)
+        card.clicked.connect(self._on_folder_clicked)
+        card.delete_requested.connect(self._on_delete_folder)
+        card.rename_requested.connect(self._on_rename_folder)
+        card.image_dropped.connect(self._on_image_dropped)
+        
+        self.folder_grid_layout.insertWidget(0, card)
+        self._folder_cards[folder["id"]] = card
+
+    def _remove_folder_card_widget(self, folder_id: int):
+        """Safely remove a folder card widget from the UI and delete it."""
+        card = self._folder_cards.pop(folder_id, None)
+        if card:
+            try:
+                card.clicked.disconnect()
+                card.delete_requested.disconnect()
+                card.rename_requested.disconnect()
+                card.image_dropped.disconnect()
+            except Exception:
+                pass
+            if getattr(self, "folder_grid_layout", None) is not None:
+                self.folder_grid_layout.removeWidget(card)
+            card.setParent(None)
+            card.deleteLater()
+            
+        # If no folders left in the root view, restore view to trigger empty state properly
+        if self._current_view == "root" and not self._folder_cards and not any(img.get("folder_id") is None for img in self._cached_images):
+            self._restore_current_view()
+
+    def _add_image_card_widget(self, image: dict):
+        """Create and prepend an ImageCard widget directly to the grid layout."""
+        grid_widget = getattr(self, "_image_grid_widget", None)
+        if not grid_widget or grid_widget.layout() is None:
+            self._restore_current_view()
+            return
+
+        card = ImageCard(image)
+        card.clicked.connect(self._on_image_clicked)
+        card.delete_requested.connect(self._on_delete_image)
+        card.rename_requested.connect(self._on_rename_image)
+        card.move_requested.connect(self._on_move_image)
+
+        grid_widget.layout().insertWidget(0, card)
+        self._image_cards[image["id"]] = card
+
+    def _remove_image_card_widget(self, image_id: int):
+        """Safely remove an image card widget from the UI and delete it."""
+        card = self._image_cards.pop(image_id, None)
+        if card:
+            try:
+                card.clicked.disconnect()
+                card.delete_requested.disconnect()
+                card.rename_requested.disconnect()
+                card.move_requested.disconnect()
+            except Exception:
+                pass
+            grid_widget = getattr(self, "_image_grid_widget", None)
+            if grid_widget and grid_widget.layout() is not None:
+                grid_widget.layout().removeWidget(card)
+            card.setParent(None)
+            card.deleteLater()
+            
+        # If no images left in the grid, restore view to trigger empty state properly
+        grid_widget = getattr(self, "_image_grid_widget", None)
+        if grid_widget and grid_widget.layout() is not None and grid_widget.layout().count() == 0:
+            self._restore_current_view()
+
+    def add_saved_image(self, image_data: dict):
+        """Prepend a newly saved image to the cache and patch the UI in-place."""
+        if not image_data or not isinstance(image_data, dict):
+            return
+        
+        # Avoid duplicate entries in cache
+        if any(img.get("id") == image_data.get("id") for img in self._cached_images):
+            return
+
+        # Prepend to the cache list
+        self._cached_images.insert(0, image_data)
+
+        # Apply active view matrix rules to show/hide the widget
+        if self._current_view == "root":
+            # root view displays unfiled images (folder_id is None) at the bottom
+            if image_data.get("folder_id") is None:
+                self._add_image_card_widget(image_data)
+        elif self._current_view == "folder":
+            # Display if it belongs to the current folder
+            if self._current_folder_id == image_data.get("folder_id"):
+                self._add_image_card_widget(image_data)
+        elif self._current_view == "recent":
+            # Always show in recent view
+            self._add_image_card_widget(image_data)
+
+        # Reconcile counts
+        self._reconcile_folder_counts()
+
+    def _move_image_locally(self, image_id: int, new_folder_id: int):
+        """Update an image's folder in the cache and patch the UI in-place."""
+        image_data = self._get_cached_image(image_id)
+        if not image_data:
+            return
+
+        old_folder_id = image_data.get("folder_id")
+        target_folder_id = new_folder_id if new_folder_id != 0 else None
+
+        # Update cache
+        image_data["folder_id"] = target_folder_id
+
+        # Apply active view matrix rules to show/hide the widget
+        if self._current_view == "root":
+            # Case 1: Moved from unfiled to a folder -> remove widget
+            if old_folder_id is None and target_folder_id is not None:
+                self._remove_image_card_widget(image_id)
+            # Case 2: Moved from folder to unfiled -> add widget
+            elif old_folder_id is not None and target_folder_id is None:
+                self._add_image_card_widget(image_data)
+        elif self._current_view == "folder":
+            # Case 1: Moved out of the current folder -> remove widget
+            if old_folder_id == self._current_folder_id and target_folder_id != self._current_folder_id:
+                self._remove_image_card_widget(image_id)
+            # Case 2: Moved into the current folder -> add widget
+            elif old_folder_id != self._current_folder_id and target_folder_id == self._current_folder_id:
+                self._add_image_card_widget(image_data)
+
+        # Reconcile counts
+        self._reconcile_folder_counts()
 
     def _clear_content(self):
         def clear_layout(layout):
@@ -1681,6 +1835,13 @@ class DashboardWindow(QWidget):
                 item.widget().deleteLater()
             elif item.layout():
                 clear_layout(item.layout())
+
+        # Clear mappings and instance variables
+        self._folder_cards = {}
+        self._image_cards = {}
+        self.folder_grid = None
+        self.folder_grid_layout = None
+        self._image_grid_widget = None
 
     def _load_all_files_async(self):
         self._start_cache_load()
@@ -1771,18 +1932,21 @@ class DashboardWindow(QWidget):
             header_row.addStretch()
             self.content_layout.addLayout(header_row)
 
-            folder_grid = QWidget()
-            folder_grid_layout = FlowLayout(folder_grid, spacing=SPACE["md"])
+            self.folder_grid = QWidget()
+            self.folder_grid.setStyleSheet("background-color: transparent;")
+            self.folder_grid_layout = FlowLayout(self.folder_grid, spacing=SPACE["md"])
 
+            self._folder_cards = {}
             for folder in folders:
                 card = FolderCard(folder)
                 card.clicked.connect(self._on_folder_clicked)
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
                 card.image_dropped.connect(self._on_image_dropped)
-                folder_grid_layout.addWidget(card)
+                self.folder_grid_layout.addWidget(card)
+                self._folder_cards[folder["id"]] = card
 
-            self.content_layout.addWidget(folder_grid)
+            self.content_layout.addWidget(self.folder_grid)
 
         if unfiled_images:
             self.content_layout.addSpacing(SPACE["md"])
@@ -1902,7 +2066,10 @@ class DashboardWindow(QWidget):
         self.all_images = images
 
         self._image_grid_widget = QWidget()
+        self._image_grid_widget.setStyleSheet("background-color: transparent;")
         grid_layout = FlowLayout(self._image_grid_widget, spacing=SPACE["md"])
+        
+        self._image_cards = {}
         for image in display_images:
             card = ImageCard(image)
             card.clicked.connect(self._on_image_clicked)
@@ -1910,6 +2077,7 @@ class DashboardWindow(QWidget):
             card.rename_requested.connect(self._on_rename_image)
             card.move_requested.connect(self._on_move_image)
             grid_layout.addWidget(card)
+            self._image_cards[image["id"]] = card
         self.content_layout.addWidget(self._image_grid_widget)
 
         if len(images) > 20 or show_load_more:
@@ -1926,7 +2094,7 @@ class DashboardWindow(QWidget):
         self.load_more_btn.deleteLater()
 
         remaining_images = self.all_images[20:]
-        if remaining_images and hasattr(self, "_image_grid_widget"):
+        if remaining_images and getattr(self, "_image_grid_widget", None) is not None:
             layout = self._image_grid_widget.layout()
             if layout:
                 for image in remaining_images:
@@ -1936,6 +2104,7 @@ class DashboardWindow(QWidget):
                     card.rename_requested.connect(self._on_rename_image)
                     card.move_requested.connect(self._on_move_image)
                     layout.addWidget(card)
+                    self._image_cards[image["id"]] = card
 
     def _show_empty_state(self, title: str, subtitle: str):
         c = theme.c
@@ -2638,15 +2807,25 @@ class DashboardWindow(QWidget):
     def _on_folder_clicked(self, folder_id: int, folder_name: str):
         self._load_folder(folder_id, folder_name)
 
-    def _on_image_clicked(self, image_data: dict):
+    def _on_image_clicked(self, image_id: int):
+        image_data = self._get_cached_image(image_id)
+        if not image_data:
+            return
+            
         import time
         current_time = time.time()
         # If the signed URL was generated more than 50 minutes (3000 seconds) ago,
         # or if there is no signed URL, refresh it.
         if current_time - image_data.get("_signed_at", 0) > 3000 or not image_data.get("public_url"):
-            res = self.api_client.get_image(image_data["id"])
-            if res.get("success") and res.get("data"):
-                image_data.update(res.get("data"))
+            try:
+                res = self.api_client.get_image(image_id)
+                if res.get("success") and res.get("data"):
+                    image_data.update(res.get("data"))
+                    image_data["_signed_at"] = current_time
+                else:
+                    print(f"Warning: Failed to refresh signed URL for image {image_id}: {res.get('error')}")
+            except Exception as e:
+                print(f"Error: Exception while retrieving signed URL for image {image_id}: {e}")
 
         dialog = ImagePreviewDialog(image_data, self)
         dialog.exec_()
@@ -2662,7 +2841,7 @@ class DashboardWindow(QWidget):
                     if new_folder:
                         new_folder["image_count"] = 0
                         self._cached_folders.insert(0, new_folder)
-                        self._restore_current_view()
+                        self._add_folder_card_widget(new_folder)
                 else:
                     QMessageBox.warning(
                         self,
@@ -2711,7 +2890,10 @@ class DashboardWindow(QWidget):
             if self._current_view == "folder" and self._current_folder_id == folder_id:
                 self._on_nav_all()
             else:
-                self._restore_current_view()
+                if delete_images:
+                    self._remove_folder_card_widget(folder_id)
+                else:
+                    self._restore_current_view()
         else:
             QMessageBox.warning(self, "Error", "Failed to delete folder")
 
@@ -2719,7 +2901,8 @@ class DashboardWindow(QWidget):
         new_name, ok = QInputDialog.getText(
             self, "Rename Folder", "New name:", text=current_name
         )
-        if ok and new_name and new_name != current_name:
+        if ok and new_name and new_name.strip() and new_name.strip() != current_name:
+            new_name = new_name.strip()
             result = api_client.update_folder(folder_id, name=new_name)
             if result.get("success"):
                 # Update local cache
@@ -2731,7 +2914,14 @@ class DashboardWindow(QWidget):
                 if self._current_view == "folder" and self._current_folder_id == folder_id:
                     self._current_folder_name = new_name
                     self.current_folder_name = new_name
-                self._restore_current_view()
+                    self.header_title.setText(new_name)
+                    self.header_subtitle.setText(f"Root / Folders / {new_name}")
+                
+                # Update folder card label directly
+                card = self._folder_cards.get(folder_id)
+                if card:
+                    card.folder_name = new_name
+                    card.name_label.setText(new_name)
             else:
                 QMessageBox.warning(
                     self, "Error", result.get("error", "Failed to rename folder")
@@ -2747,30 +2937,50 @@ class DashboardWindow(QWidget):
         if reply == QMessageBox.Yes:
             result = api_client.delete_image(image_id)
             if result.get("success"):
-                self.refresh()
+                # Remove from cache
+                self._cached_images = [img for img in self._cached_images if img["id"] != image_id]
+                # Remove widget
+                self._remove_image_card_widget(image_id)
+                # Reconcile counts
+                self._reconcile_folder_counts()
             else:
                 QMessageBox.warning(self, "Error", "Failed to delete image")
 
-    def _on_rename_image(self, image_data: dict):
+    def _on_rename_image(self, image_id: int):
+        image_data = self._get_cached_image(image_id)
+        if not image_data:
+            return
+
         current_name = image_data.get("filename", "")
         new_name, ok = QInputDialog.getText(
             self, "Rename Image", "New filename:", text=current_name
         )
         if ok and new_name.strip() and new_name.strip() != current_name:
-            result = api_client.update_image(image_data["id"], filename=new_name.strip())
+            new_name = new_name.strip()
+            result = api_client.update_image(image_id, filename=new_name)
             if result.get("success"):
-                self.refresh()
+                # Update local cache
+                image_data["filename"] = new_name
+                
+                # Update visible card directly
+                card = self._image_cards.get(image_id)
+                if card:
+                    card.image_data["filename"] = new_name
+                    card.name_label.setText(new_name)
+                    size = card.image_data.get("file_size")
+                    size_text = format_file_size(size) if size else "0 KB"
+                    ext = new_name.split(".")[-1].upper() if "." in new_name else "PNG"
+                    card.meta_label.setText(f"{size_text} • {ext}")
             else:
                 QMessageBox.warning(self, "Error", result.get("error", "Failed to rename image"))
 
 
-    def _on_move_image(self, image_data: dict):
-        folders_result = api_client.get_folders()
-        if not folders_result.get("success"):
-            QMessageBox.warning(self, "Error", "Failed to load folders")
+    def _on_move_image(self, image_id: int):
+        image_data = self._get_cached_image(image_id)
+        if not image_data:
             return
 
-        folders = folders_result.get("data", [])
+        folders = self._cached_folders
         folder_names = ["Unfiled"] + [f["name"] for f in folders]
         folder_ids = [0] + [f["id"] for f in folders]
 
@@ -2782,20 +2992,29 @@ class DashboardWindow(QWidget):
             )
             return
 
+        # Find current folder index to set as default in prompt
+        curr_folder_id = image_data.get("folder_id")
+        current_idx = 0
+        if curr_folder_id is not None:
+            try:
+                current_idx = folder_ids.index(curr_folder_id)
+            except ValueError:
+                current_idx = 0
+
         choice, ok = QInputDialog.getItem(
             self,
             "Move to Folder",
             f"Move '{image_data.get('filename', 'image')}' to:",
             folder_names,
-            0,
+            current_idx,
             False,
         )
         if ok and choice:
             idx = folder_names.index(choice)
             folder_id = folder_ids[idx]
-            result = api_client.move_image_to_folder(image_data["id"], folder_id=folder_id)
+            result = api_client.move_image_to_folder(image_id, folder_id=folder_id)
             if result.get("success"):
-                self.refresh()
+                self._move_image_locally(image_id, folder_id)
             else:
                 QMessageBox.warning(
                     self, "Error", result.get("error", "Failed to move image")
@@ -2818,7 +3037,7 @@ class DashboardWindow(QWidget):
         try:
             result = self.api_client.move_image_to_folder(image_id, folder_id=folder_id)
             if result.get("success"):
-                self.refresh()
+                self._move_image_locally(image_id, folder_id)
             else:
                 QMessageBox.warning(
                     self,

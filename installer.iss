@@ -2,9 +2,9 @@
 ; Build installer using Inno Setup Compiler
 
 #define MyAppName "SnipShot"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "SnipShot"
-#define MyAppURL "https://github.com/yourusername/snipshot"
+#define MyAppURL "https://github.com/Famanias/snipshot-desktop"
 #define MyAppExeName "SnipShot.exe"
 
 [Setup]

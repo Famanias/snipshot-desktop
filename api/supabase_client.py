@@ -280,6 +280,76 @@ class SupabaseAPIClient:
             return self._err(e)
 
     # ------------------------------------------------------------------
+    # Signed URL Helpers
+    # ------------------------------------------------------------------
+
+    def _get_signed_url(self, path: str, expires_in: int = 3600) -> Optional[str]:
+        """Fetch a single signed URL from Supabase storage."""
+        try:
+            res = self.client.storage.from_(_IMAGE_BUCKET).create_signed_url(
+                path, expires_in=expires_in
+            )
+            return res.get("signedURL") or res.get("signedUrl")
+        except Exception as e:
+            print(f"Error generating signed URL for path {path}: {e}")
+            return None
+
+    def _get_signed_urls(self, paths: list[str], expires_in: int = 3600) -> dict[str, str]:
+        """Fetch signed URLs in batch from Supabase storage.
+
+        Returns a dict mapping path -> signed URL.
+        """
+        if not paths:
+            return {}
+        try:
+            res = self.client.storage.from_(_IMAGE_BUCKET).create_signed_urls(
+                paths, expires_in=expires_in
+            )
+            url_map = {}
+            for item in res:
+                if item and not item.get("error"):
+                    path = item.get("path")
+                    signed_url = item.get("signedURL") or item.get("signedUrl")
+                    if path and signed_url:
+                        url_map[path] = signed_url
+                elif item and item.get("error"):
+                    print(f"Error in batch signed URL for {item.get('path')}: {item.get('error')}")
+            return url_map
+        except Exception as e:
+            print(f"Error in batch signed URL generation: {e}")
+            return {}
+
+    def _sign_single_image_url(self, img: dict, expires_in: int = 3600) -> dict:
+        """Populate the public_url field in a single image dictionary."""
+        if not img:
+            return img
+        path = img.get("storage_path")
+        if path:
+            img["public_url"] = self._get_signed_url(path, expires_in=expires_in) or ""
+            img["_signed_at"] = time.time()
+        else:
+            img["public_url"] = ""
+            img["_signed_at"] = 0
+        return img
+
+    def _sign_image_urls(self, images: list[dict], expires_in: int = 3600) -> list[dict]:
+        """Populate the public_url field in a list of image dictionaries."""
+        if not images:
+            return images
+        paths = [img["storage_path"] for img in images if img.get("storage_path")]
+        url_map = self._get_signed_urls(paths, expires_in=expires_in)
+        now = time.time()
+        for img in images:
+            path = img.get("storage_path")
+            if path and path in url_map:
+                img["public_url"] = url_map[path]
+                img["_signed_at"] = now
+            else:
+                img["public_url"] = ""
+                img["_signed_at"] = 0
+        return images
+
+    # ------------------------------------------------------------------
     # Images
     # ------------------------------------------------------------------
 
@@ -316,7 +386,7 @@ class SupabaseAPIClient:
             total = count_res.count if hasattr(count_res, "count") else len(res.data)
 
             return self._ok({
-                "images": res.data,
+                "images": self._sign_image_urls(res.data),
                 "total": total,
                 "page": page,
                 "per_page": per_page,
@@ -334,7 +404,7 @@ class SupabaseAPIClient:
                 .single()
                 .execute()
             )
-            return self._ok(res.data)
+            return self._ok(self._sign_single_image_url(res.data))
         except Exception as e:
             return self._err(e)
 
@@ -349,7 +419,7 @@ class SupabaseAPIClient:
                 .range(offset, offset + per_page - 1)
                 .execute()
             )
-            return self._ok(res.data)
+            return self._ok(self._sign_image_urls(res.data))
         except Exception as e:
             return self._err(e)
 
@@ -378,9 +448,6 @@ class SupabaseAPIClient:
             self.client.storage.from_(_IMAGE_BUCKET).upload(
                 storage_path, file_content
             )
-            public_url = self.client.storage.from_(_IMAGE_BUCKET).get_public_url(
-                storage_path
-            )
             file_size = len(file_content)
 
             res = (
@@ -390,7 +457,6 @@ class SupabaseAPIClient:
                         "folder_id": folder_id,
                         "user_id": user_id,
                         "storage_path": storage_path,
-                        "public_url": public_url,
                         "filename": original_filename,
                         "original_filename": original_filename,
                         "source_language": source_language,
@@ -400,7 +466,7 @@ class SupabaseAPIClient:
                 )
                 .execute()
             )
-            return self._ok(res.data[0] if res.data else None)
+            return self._ok(self._sign_single_image_url(res.data[0]) if res.data else None)
         except Exception as e:
             return self._err(e)
 
@@ -427,9 +493,6 @@ class SupabaseAPIClient:
                 image_bytes,
                 file_options={"content-type": "image/png"},
             )
-            public_url = self.client.storage.from_(_IMAGE_BUCKET).get_public_url(
-                storage_path
-            )
             file_size = len(image_bytes)
 
             res = (
@@ -439,7 +502,6 @@ class SupabaseAPIClient:
                         "folder_id": folder_id,
                         "user_id": user_id,
                         "storage_path": storage_path,
-                        "public_url": public_url,
                         "filename": original_filename,
                         "original_filename": original_filename,
                         "source_language": source_language,
@@ -449,7 +511,7 @@ class SupabaseAPIClient:
                 )
                 .execute()
             )
-            return self._ok(res.data[0] if res.data else None)
+            return self._ok(self._sign_single_image_url(res.data[0]) if res.data else None)
         except Exception as e:
             return self._err(e)
 
@@ -494,7 +556,7 @@ class SupabaseAPIClient:
             if not res.data:
                 return self._err("Update failed — no rows affected. Check RLS policies.")
 
-            return self._ok(res.data[0])
+            return self._ok(self._sign_single_image_url(res.data[0]))
         except Exception as e:
             return self._err(e)
     
@@ -540,7 +602,7 @@ class SupabaseAPIClient:
                 .ilike("original_filename", f"%{query}%")
                 .execute()
             )
-            return self._ok(res.data)
+            return self._ok(self._sign_image_urls(res.data))
         except Exception as e:
             return self._err(e)
 

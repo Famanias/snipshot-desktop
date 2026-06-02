@@ -2629,6 +2629,15 @@ class DashboardWindow(QWidget):
         self._load_folder(folder_id, folder_name)
 
     def _on_image_clicked(self, image_data: dict):
+        import time
+        current_time = time.time()
+        # If the signed URL was generated more than 50 minutes (3000 seconds) ago,
+        # or if there is no signed URL, refresh it.
+        if current_time - image_data.get("_signed_at", 0) > 3000 or not image_data.get("public_url"):
+            res = self.api_client.get_image(image_data["id"])
+            if res.get("success") and res.get("data"):
+                image_data.update(res.get("data"))
+
         dialog = ImagePreviewDialog(image_data, self)
         dialog.exec_()
 

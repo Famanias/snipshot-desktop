@@ -88,7 +88,7 @@ ISCC.exe installer.iss
 
 *If `ISCC.exe` is not in your path, run it by supplying the absolute path:*
 ```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer1.iss
 ```
 
 ### What this does:

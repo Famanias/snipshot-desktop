@@ -33,7 +33,7 @@ from PyQt5.QtWidgets import (
     QInputDialog, QMessageBox, QSizePolicy, QListWidget,
     QListWidgetItem, QStackedWidget, QProgressBar, QDialog,
     QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox,
-    QLayout, QSpinBox, QDoubleSpinBox, QSlider,
+    QLayout, QSplitter, QSpinBox, QDoubleSpinBox, QSlider,
 )
 from typing import Optional
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread, QRect, QPoint
@@ -1113,7 +1113,37 @@ class TrashDropZone(QFrame):
             event.ignore()
 
 
+class ElidedLabel(QLabel):
+    """A QLabel that automatically elides text to fit its width, with a tooltip of the full text."""
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full_text = text
+        self.setToolTip(text)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.setMinimumWidth(30)
+
+    def setText(self, text):
+        self._full_text = text
+        self.setToolTip(text)
+        self._elide_text()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._elide_text()
+
+    def _elide_text(self):
+        fm = self.fontMetrics()
+        elided = fm.elidedText(self._full_text, Qt.ElideMiddle, self.width())
+        if elided != super().text():
+            super().setText(elided)
+
+    def minimumSizeHint(self):
+        return QSize(30, self.fontMetrics().height())
+
+
 class QueueItemWidget(QFrame):
+    cancel_requested = pyqtSignal(str)
+
     def __init__(self, item_id: str, name: str, lang: str, thumbnail: QPixmap = None, parent=None):
         super().__init__(parent)
         self.item_id = item_id
@@ -1151,14 +1181,13 @@ class QueueItemWidget(QFrame):
         name_lang = QHBoxLayout()
         name_lang.setSpacing(4)
         
-        self.name_lbl = QLabel(name)
-        self.name_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
+        self.name_lbl = ElidedLabel(name)
+        self.name_lbl.setStyleSheet("font-weight: 600; font-size: 12px; background: transparent;")
         
         self.lang_badge = QLabel(lang)
         
-        name_lang.addWidget(self.name_lbl)
-        name_lang.addStretch()
-        name_lang.addWidget(self.lang_badge)
+        name_lang.addWidget(self.name_lbl, 1)
+        name_lang.addWidget(self.lang_badge, 0)
         details.addLayout(name_lang)
         
         # Progress Bar
@@ -1172,9 +1201,20 @@ class QueueItemWidget(QFrame):
         # Status
         self.status_lbl = QLabel("Pending...")
         self.status_lbl.setStyleSheet("font-size: 11px;")
+        self.status_lbl.setWordWrap(True)
         details.addWidget(self.status_lbl)
         
-        layout.addLayout(details)
+        layout.addLayout(details, 1)
+
+        # Cancel Button
+        self.cancel_btn = QPushButton("×")
+        self.cancel_btn.setFixedSize(20, 20)
+        self.cancel_btn.setCursor(Qt.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
+        layout.addWidget(self.cancel_btn)
+
+    def _on_cancel_clicked(self):
+        self.cancel_requested.emit(self.item_id)
 
     def _apply_style(self):
         c = theme.c
@@ -1208,12 +1248,33 @@ class QueueItemWidget(QFrame):
             }}
         """)
         self.status_lbl.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']}; background: transparent;")
+        self.cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {c['text_secondary']};
+                border: none;
+                font-size: 16px;
+                font-weight: bold;
+                border-radius: 10px;
+                padding: 0px;
+                margin: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {c['error_bg']};
+                color: {c['error']};
+            }}
+        """)
 
     def update_status(self, status: str, progress: int = 0, error_msg: str = ""):
         c = theme.c
         self.status = status
         self.progress.setValue(progress)
         
+        if status in ("pending", "translating", "saving"):
+            self.cancel_btn.show()
+        else:
+            self.cancel_btn.hide()
+            
         if status == "pending":
             self.status_lbl.setText("Pending...")
             self.status_lbl.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']}; background: transparent;")
@@ -1258,6 +1319,7 @@ class DashboardWindow(QWidget):
     continuous_mode_changed = pyqtSignal(bool)
     continuous_shortcut_changed = pyqtSignal(int)
     snip_interval_changed = pyqtSignal(int)
+    cancel_queue_item_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1410,7 +1472,7 @@ class DashboardWindow(QWidget):
         
         # Queue toggle button in top bar
         self.queue_toggle_btn = QPushButton()
-        self.queue_toggle_btn.setFixedSize(65, 28)
+        self.queue_toggle_btn.setFixedSize(28, 28)
         self.queue_toggle_btn.setIcon(load_icon("translate_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.queue_toggle_btn.setIconSize(QSize(20, 20))
         self.queue_toggle_btn.setCursor(Qt.PointingHandCursor)
@@ -1502,8 +1564,6 @@ class DashboardWindow(QWidget):
         user_layout.addWidget(self.logout_btn)
         sidebar_layout.addWidget(self.user_frame)
 
-        split_layout.addWidget(self.sidebar)
-
         # ========== Content Area ==========
         self.content_frame = QFrame()
         content_layout = QVBoxLayout(self.content_frame)
@@ -1591,7 +1651,8 @@ class DashboardWindow(QWidget):
         # ========== Queue Sidebar Drawer (Right) ==========
         self.queue_sidebar = QFrame()
         self.queue_sidebar.setObjectName("queue_sidebar")
-        self.queue_sidebar.setFixedWidth(280)
+        self.queue_sidebar.setMinimumWidth(320)
+        self.queue_sidebar.setMaximumWidth(600)
         self.queue_sidebar.setHidden(True)
 
         queue_layout = QVBoxLayout(self.queue_sidebar)
@@ -1628,6 +1689,7 @@ class DashboardWindow(QWidget):
         # Scroll area for queue items
         self.q_scroll = QScrollArea()
         self.q_scroll.setWidgetResizable(True)
+        self.q_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.q_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         
         self.q_list_widget = QWidget()
@@ -1652,8 +1714,16 @@ class DashboardWindow(QWidget):
         self.q_clear_btn.clicked.connect(self._clear_completed_queue)
         queue_layout.addWidget(self.q_clear_btn)
 
-        split_layout.addWidget(self.content_frame)
-        split_layout.addWidget(self.queue_sidebar)
+        split_layout.addWidget(self.sidebar)
+        
+        # Create a splitter for main content and queue sidebar
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setChildrenCollapsible(False)
+        self.main_splitter.addWidget(self.content_frame)
+        self.main_splitter.addWidget(self.queue_sidebar)
+        self.main_splitter.setSizes([800, 350])
+        
+        split_layout.addWidget(self.main_splitter)
         outer_layout.addWidget(split_widget)
 
         # Keep dummy controls for compatibility
@@ -1672,6 +1742,19 @@ class DashboardWindow(QWidget):
     def _apply_styles(self):
         """Apply or re-apply all sidebar / header / fixed-element styles."""
         c = theme.c
+
+        if hasattr(self, "main_splitter"):
+            self.main_splitter.setStyleSheet(f"""
+                QSplitter::handle {{
+                    background-color: {c['border']};
+                }}
+                QSplitter::handle:horizontal {{
+                    width: 2px;
+                }}
+                QSplitter::handle:horizontal:hover {{
+                    background-color: {c['primary']};
+                }}
+            """)
 
         self.sidebar.setStyleSheet(f"""
             QFrame#sidebar {{
@@ -1840,6 +1923,8 @@ class DashboardWindow(QWidget):
         self.nav_recent.setIcon(load_icon("recents_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.nav_settings.setIcon(load_icon("settings_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         self.logout_btn.setIcon(load_icon("logout_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.queue_toggle_btn.setIcon(load_icon("translate_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self._update_queue_badge()
         
         # Re-render active view to recreate/style all dynamic controls with the new theme
         self._restore_current_view()
@@ -3529,6 +3614,7 @@ class DashboardWindow(QWidget):
 
         # Instantiate item widget
         widget = QueueItemWidget(item_id, name, lang, thumbnail, self)
+        widget.cancel_requested.connect(self.cancel_queue_item_requested.emit)
         self._queue_widgets[item_id] = widget
         
         # Add to list layout
@@ -3582,6 +3668,7 @@ class DashboardWindow(QWidget):
                 active_count += 1
                 
         if active_count > 0:
+            self.queue_toggle_btn.setFixedSize(65, 28)
             self.queue_toggle_btn.setText(f" ({active_count})")
             c = theme.c
             self.queue_toggle_btn.setStyleSheet(f"""
@@ -3594,17 +3681,18 @@ class DashboardWindow(QWidget):
                     border-radius: 14px;
                 }}
                 QPushButton:hover {{
-                    background-color: {c['hover']};
+                    background-color: {c['primary_light']};
                 }}
             """)
         else:
+            self.queue_toggle_btn.setFixedSize(28, 28)
             self.queue_toggle_btn.setText("")
             c = theme.c
             self.queue_toggle_btn.setStyleSheet(f"""
                 QPushButton {{
                     background-color: transparent;
                     border: none;
-                    font-size: 14px;
+                    padding: 0px;
                     border-radius: 14px;
                     color: {c['text_secondary']};
                 }}

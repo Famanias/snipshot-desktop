@@ -41,6 +41,7 @@ class CaptureWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(None)  # No parent — independent window
         self.parent_window = parent
+        self.show_parent_on_close = True
 
         # Hide parent window during capture
         if self.parent_window:
@@ -189,7 +190,7 @@ class CaptureWidget(QWidget):
             self.hide()
             QApplication.processEvents()
 
-            if self.parent_window:
+            if self.parent_window and getattr(self, "show_parent_on_close", True):
                 self.parent_window.show()
                 QApplication.processEvents()
 
@@ -221,7 +222,7 @@ class CaptureWidget(QWidget):
         self.hide()
         QApplication.processEvents()
 
-        if self.parent_window:
+        if self.parent_window and getattr(self, "show_parent_on_close", True):
             self.parent_window.show()
             QApplication.processEvents()
 

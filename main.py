@@ -23,10 +23,10 @@ from pathlib import Path
 import platformdirs
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QSystemTrayIcon, QMenu, QAction,
-    QWidget, QHBoxLayout, QFrame, QLabel, QPushButton
+    QWidget, QHBoxLayout, QFrame, QLabel, QPushButton, QShortcut
 )
 from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal, QThread, QBuffer, QIODevice
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtGui import QIcon, QPixmap, QKeySequence
 
 # Setup crash logging
 log_dir = Path(platformdirs.user_data_dir("Snipshot", "Snipshot"))
@@ -329,6 +329,8 @@ class MainWindow(QMainWindow):
         settings = QSettings("SnipShot", "SnipShot")
         self._snip_interval_ms = settings.value("continuous_snip_interval", DEFAULT_CONTINUOUS_SNIP_INTERVAL, type=int)
 
+        self._snip_local_shortcut = None
+        self._continuous_local_shortcut = None
         self._install_snip_shortcut(DEFAULT_SHORTCUT_KEY)
         self._install_continuous_snip_shortcut(DEFAULT_CONTINUOUS_SHORTCUT_KEY)
     
@@ -357,6 +359,7 @@ class MainWindow(QMainWindow):
         self.dashboard.continuous_mode_changed.connect(self._on_continuous_mode_changed)
         self.dashboard.continuous_shortcut_changed.connect(self._install_continuous_snip_shortcut)
         self.dashboard.snip_interval_changed.connect(self._on_snip_interval_changed)
+        self.dashboard.cancel_queue_item_requested.connect(self._on_cancel_queue_item)
         self.stack.addWidget(self.dashboard)
     
     def _show_login(self):
@@ -451,6 +454,16 @@ class MainWindow(QMainWindow):
             user32.UnregisterHotKey(hwnd, _SNIP_HOTKEY_ID)
             self._current_hotkey_vk = None
 
+        # Re-create active window local fallback shortcut
+        if hasattr(self, "_snip_local_shortcut") and self._snip_local_shortcut is not None:
+            self._snip_local_shortcut.setEnabled(False)
+            self._snip_local_shortcut.deleteLater()
+            self._snip_local_shortcut = None
+
+        self._snip_local_shortcut = QShortcut(QKeySequence(key), self)
+        self._snip_local_shortcut.setContext(Qt.WindowShortcut)
+        self._snip_local_shortcut.activated.connect(lambda: self._start_capture(continuous=False))
+
         vk = _qt_key_to_vk(key)
         if vk is None:
             return  # Key not mappable to a Win32 Virtual Key
@@ -476,6 +489,16 @@ class MainWindow(QMainWindow):
         if self._current_continuous_hotkey_vk is not None:
             user32.UnregisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID)
             self._current_continuous_hotkey_vk = None
+
+        # Re-create active window local fallback shortcut
+        if hasattr(self, "_continuous_local_shortcut") and self._continuous_local_shortcut is not None:
+            self._continuous_local_shortcut.setEnabled(False)
+            self._continuous_local_shortcut.deleteLater()
+            self._continuous_local_shortcut = None
+
+        self._continuous_local_shortcut = QShortcut(QKeySequence(key), self)
+        self._continuous_local_shortcut.setContext(Qt.WindowShortcut)
+        self._continuous_local_shortcut.activated.connect(lambda: self._start_capture(continuous=True))
 
         vk = _qt_key_to_vk(key)
         if vk is None:
@@ -522,6 +545,11 @@ class MainWindow(QMainWindow):
         self._show_login()
         if hasattr(self, "continuous_hud") and self.continuous_hud is not None:
             self.continuous_hud.hide()
+        if hasattr(self, "translation_queue") and self.translation_queue:
+            for item in list(self.translation_queue):
+                self.dashboard.update_queue_item_ui(item["item_id"], "cancelled")
+            self.translation_queue.clear()
+        self._clear_active_worker()
 
     def _on_continuous_mode_changed(self, enabled: bool):
         self._update_indicator()
@@ -530,10 +558,6 @@ class MainWindow(QMainWindow):
         else:
             while QApplication.overrideCursor() is not None:
                 QApplication.restoreOverrideCursor()
-            if hasattr(self, "translation_queue") and self.translation_queue:
-                for item in list(self.translation_queue):
-                    self.dashboard.update_queue_item_ui(item["item_id"], "cancelled")
-                self.translation_queue.clear()
 
     def _on_snip_interval_changed(self, interval: int):
         self._snip_interval_ms = interval
@@ -580,10 +604,6 @@ class MainWindow(QMainWindow):
         # Ignore if a capture is already in progress
         if self.capture_widget is not None and self.capture_widget.isVisible():
             return
-            
-        # Ignore if single-snip translation is in progress (blocks further captures)
-        if not self.dashboard.continuous_mode_enabled and self._translation_in_progress:
-            return
 
         self._update_indicator()
         self.hide()
@@ -594,6 +614,8 @@ class MainWindow(QMainWindow):
     def _do_capture(self):
         """Actually perform the capture"""
         self.capture_widget = CaptureWidget(self)
+        if self.dashboard.continuous_mode_enabled:
+            self.capture_widget.show_parent_on_close = False
         self.capture_widget.captured.connect(self._on_capture_complete)
         self.capture_widget.cancelled.connect(self._on_capture_cancelled)
         self.capture_widget.show()
@@ -603,7 +625,7 @@ class MainWindow(QMainWindow):
     
     def _on_capture_complete(self, pixmap: QPixmap, temp_path: str):
         """Handle completed capture"""
-        # Note: Parent window is already shown by CaptureWidget
+        # Note: Parent window is already shown by CaptureWidget (unless show_parent_on_close is False)
         
         # Check if user is authenticated
         if not api_client.is_authenticated:
@@ -617,23 +639,7 @@ class MainWindow(QMainWindow):
             if self.dashboard.continuous_mode_enabled:
                 QTimer.singleShot(self._snip_interval_ms, self._start_capture)
         else:
-            self._translation_in_progress = True
-            self._update_indicator()
-            
-            # Open translation dialog
-            self.translation_window = TranslationWindow(
-                pixmap,
-                self,
-                target_language=self.dashboard.get_target_language(),
-                translation_config=self.dashboard.get_translation_config(),
-            )
-            self.translation_window.saved.connect(self.dashboard.add_saved_image)
-            
-            try:
-                self.translation_window.exec_()
-            finally:
-                self._translation_in_progress = False
-                self._update_indicator()
+            self._add_to_queue(pixmap, is_single=True)
 
     def _on_capture_cancelled(self):
         """Handle cancelled capture"""
@@ -641,9 +647,13 @@ class MainWindow(QMainWindow):
         while QApplication.overrideCursor() is not None:
             QApplication.restoreOverrideCursor()
 
-        # Note: Parent window is already shown by CaptureWidget
+        # Note: Parent window is already shown by CaptureWidget (unless show_parent_on_close is False)
         if self.dashboard.continuous_mode_enabled:
             self.dashboard._set_continuous_mode(False)
+            
+        self.show()
+        self.activateWindow()
+        self.setFocus()
 
     def _on_upload_image(self, file_paths: list):
         """Handle multiple image uploads — queue them for background translation"""
@@ -692,10 +702,13 @@ class MainWindow(QMainWindow):
                 
             self._process_next_queue_item()
 
-    def _add_to_queue(self, pixmap: QPixmap):
+    def _add_to_queue(self, pixmap: QPixmap, is_single: bool = False):
         self._queue_snip_counter += 1
         item_id = f"snip_{self._queue_snip_counter}"
-        filename = f"Continuous Snip #{self._queue_snip_counter}.png"
+        if is_single:
+            filename = f"Snip #{self._queue_snip_counter}.png"
+        else:
+            filename = f"Continuous Snip #{self._queue_snip_counter}.png"
         
         folder_id = self.dashboard.current_folder_id
         target_language = self.dashboard.get_target_language()
@@ -721,6 +734,20 @@ class MainWindow(QMainWindow):
             self.dashboard.queue_sidebar.show()
             
         self._process_next_queue_item()
+
+    def _on_cancel_queue_item(self, item_id: str):
+        """Cancel a pending or translating queue item."""
+        if getattr(self, "active_worker_item_id", None) == item_id:
+            self._clear_active_worker()
+            self.dashboard.update_queue_item_ui(item_id, "cancelled")
+            self._process_next_queue_item()
+            return
+
+        for i, item in enumerate(self.translation_queue):
+            if item["item_id"] == item_id:
+                self.translation_queue.pop(i)
+                self.dashboard.update_queue_item_ui(item_id, "cancelled")
+                return
 
     def _process_next_queue_item(self):
         if self.active_worker is not None or not self.translation_queue:

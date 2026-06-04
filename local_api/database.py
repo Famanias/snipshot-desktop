@@ -29,6 +29,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             description TEXT DEFAULT '',
+            parent_folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS images (
@@ -45,4 +46,12 @@ def init_db():
         );
     """)
     conn.commit()
+
+    # Migrate existing local databases that don't have the parent_folder_id column
+    try:
+        conn.execute("ALTER TABLE folders ADD COLUMN parent_folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+        
     conn.close()

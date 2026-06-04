@@ -529,7 +529,9 @@ class FolderCard(QFrame):
     clicked = pyqtSignal(int, str)
     delete_requested = pyqtSignal(int, str)
     rename_requested = pyqtSignal(int, str)
+    move_requested = pyqtSignal(int, str)
     image_dropped = pyqtSignal(int, int)
+    folder_dropped = pyqtSignal(int, int)
 
     def __init__(self, folder_data: dict, parent=None):
         super().__init__(parent)
@@ -542,7 +544,7 @@ class FolderCard(QFrame):
         theme.theme_changed.connect(self._on_theme_changed)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-snipshot-image-id"):
+        if event.mimeData().hasFormat("application/x-snipshot-image-id") or event.mimeData().hasFormat("application/x-snipshot-folder-id"):
             event.acceptProposedAction()
             self.setProperty("dragOver", True)
             self.style().unpolish(self)
@@ -552,7 +554,7 @@ class FolderCard(QFrame):
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasFormat("application/x-snipshot-image-id"):
+        if event.mimeData().hasFormat("application/x-snipshot-image-id") or event.mimeData().hasFormat("application/x-snipshot-folder-id"):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -576,6 +578,17 @@ class FolderCard(QFrame):
                 image_id = int(image_id_str)
                 self.image_dropped.emit(self.folder_id, image_id)
                 event.acceptProposedAction()
+            except ValueError:
+                event.ignore()
+        elif mime_data.hasFormat("application/x-snipshot-folder-id"):
+            folder_id_str = mime_data.data("application/x-snipshot-folder-id").data().decode('utf-8')
+            try:
+                source_folder_id = int(folder_id_str)
+                if source_folder_id != self.folder_id:
+                    self.folder_dropped.emit(self.folder_id, source_folder_id)
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
             except ValueError:
                 event.ignore()
         else:
@@ -728,6 +741,10 @@ class FolderCard(QFrame):
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(
             lambda: self.rename_requested.emit(self.folder_id, self.folder_name)
+        )
+        move_action = menu.addAction("Move to...")
+        move_action.triggered.connect(
+            lambda: self.move_requested.emit(self.folder_id, self.folder_name)
         )
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
@@ -1362,6 +1379,7 @@ class DashboardWindow(QWidget):
         self._current_view = "root"        # "root" | "folder" | "recent"
         self._current_folder_id = None
         self._current_folder_name = ""
+        self._folder_nav_history = []      # list of (folder_id, folder_name)
         self.search_worker = None
         self.cache_loader_worker = None
         self.cache_update_worker = None
@@ -2241,6 +2259,7 @@ class DashboardWindow(QWidget):
         self.current_folder_name = None
         self._current_folder_id = None
         self._current_folder_name = ""
+        self._folder_nav_history = []
         self.header_title.setText("My Files")
         if len(self._cached_images) >= CacheLoaderWorker.SOFT_CAP:
             self.header_subtitle.setText("Root / All Files (Notice: Showing first 10,000 items. Use search to find others.)")
@@ -2250,7 +2269,7 @@ class DashboardWindow(QWidget):
         self._clear_content()
 
         c = theme.c
-        folders = self._cached_folders
+        folders = [f for f in self._cached_folders if f.get("parent_folder_id") is None]
         images = self._cached_images
         unfiled_images = [img for img in images if img.get("folder_id") is None]
 
@@ -2276,7 +2295,9 @@ class DashboardWindow(QWidget):
                 card.clicked.connect(self._on_folder_clicked)
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
+                card.move_requested.connect(self._on_move_folder)
                 card.image_dropped.connect(self._on_image_dropped)
+                card.folder_dropped.connect(self._move_folder_to_folder)
                 self.folder_grid_layout.addWidget(card)
                 self._folder_cards[folder["id"]] = card
 
@@ -2312,22 +2333,70 @@ class DashboardWindow(QWidget):
         self._current_folder_name = folder_name
         self._set_active_nav("all")
         self.header_title.setText(folder_name)
-        self.header_subtitle.setText(f"Root / Folders / {folder_name}")
+        
+        # Build breadcrumbs path dynamically
+        breadcrumbs = self._get_breadcrumbs(folder_id)
+        breadcrumb_str = "Root / Folders / " + " / ".join(f["name"] for f in breadcrumbs)
+        self.header_subtitle.setText(breadcrumb_str)
         self._clear_content()
 
         back_btn = StyledButton("", variant="ghost")
         back_btn.setIcon(load_icon("keyboard_backspace_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         back_btn.setIconSize(QSize(24, 24))
-        back_btn.setToolTip("Back to My Files")
+        back_btn.setToolTip("Back")
         back_btn.setMaximumWidth(50)
-        back_btn.clicked.connect(self._on_nav_all)
+        back_btn.clicked.connect(self._on_nav_back)
         self.content_layout.addWidget(back_btn, alignment=Qt.AlignLeft)
 
+        c = theme.c
+        subfolders = [f for f in self._cached_folders if f.get("parent_folder_id") == folder_id]
         folder_images = [img for img in self._cached_images if img.get("folder_id") == folder_id]
 
+        if subfolders:
+            header_row = QHBoxLayout()
+            header_row.setSpacing(SPACE["xs"])
+            dot = QLabel("•")
+            dot.setStyleSheet(f"color: {c['primary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
+            lbl = QLabel("Subfolders")
+            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent; text-transform: uppercase;")
+            header_row.addWidget(dot)
+            header_row.addWidget(lbl)
+            header_row.addStretch()
+            self.content_layout.addLayout(header_row)
+
+            self.folder_grid = QWidget()
+            self.folder_grid.setStyleSheet("background-color: transparent;")
+            self.folder_grid_layout = FlowLayout(self.folder_grid, spacing=SPACE["md"])
+
+            self._folder_cards = {}
+            for folder in subfolders:
+                card = FolderCard(folder)
+                card.clicked.connect(self._on_folder_clicked)
+                card.delete_requested.connect(self._on_delete_folder)
+                card.rename_requested.connect(self._on_rename_folder)
+                card.move_requested.connect(self._on_move_folder)
+                card.image_dropped.connect(self._on_image_dropped)
+                card.folder_dropped.connect(self._move_folder_to_folder)
+                self.folder_grid_layout.addWidget(card)
+                self._folder_cards[folder["id"]] = card
+
+            self.content_layout.addWidget(self.folder_grid)
+            self.content_layout.addSpacing(SPACE["md"])
+
         if folder_images:
+            if subfolders:
+                header_row = QHBoxLayout()
+                header_row.setSpacing(SPACE["xs"])
+                dot = QLabel("•")
+                dot.setStyleSheet(f"color: {c['text_secondary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
+                lbl = QLabel("Images")
+                lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent; text-transform: uppercase;")
+                header_row.addWidget(dot)
+                header_row.addWidget(lbl)
+                header_row.addStretch()
+                self.content_layout.addLayout(header_row)
             self._add_image_grid(folder_images)
-        else:
+        elif not subfolders:
             self._show_empty_state(
                 "This folder is empty",
                 "Translated images saved to this folder will appear here.",
@@ -3308,7 +3377,121 @@ class DashboardWindow(QWidget):
         return text if text else QKeySequence(key).toString()
 
     def _on_folder_clicked(self, folder_id: int, folder_name: str):
+        if self._current_view == "root":
+            self._folder_nav_history = []
+        elif self._current_view == "folder" and self._current_folder_id is not None:
+            if not self._folder_nav_history or self._folder_nav_history[-1][0] != self._current_folder_id:
+                self._folder_nav_history.append((self._current_folder_id, self._current_folder_name))
         self._load_folder(folder_id, folder_name)
+
+    def _on_nav_back(self):
+        if self._folder_nav_history:
+            prev_id, prev_name = self._folder_nav_history.pop()
+            self._load_folder(prev_id, prev_name)
+        else:
+            self._render_root_view()
+
+    def _get_breadcrumbs(self, folder_id: int) -> list:
+        path = []
+        curr_id = folder_id
+        folder_map = {f["id"]: f for f in self._cached_folders}
+        visited = set()
+        while curr_id and curr_id not in visited:
+            visited.add(curr_id)
+            f = folder_map.get(curr_id)
+            if not f:
+                break
+            path.append(f)
+            curr_id = f.get("parent_folder_id")
+        path.reverse()
+        return path
+
+    def _is_descendant(self, parent_id: int, child_id: int) -> bool:
+        """Check if child_id is a descendant of parent_id."""
+        if parent_id == child_id:
+            return True
+        
+        folder_map = {f["id"]: f for f in self._cached_folders}
+        curr_id = child_id
+        visited = set()
+        while curr_id and curr_id not in visited:
+            visited.add(curr_id)
+            f = folder_map.get(curr_id)
+            if not f:
+                break
+            parent = f.get("parent_folder_id")
+            if parent == parent_id:
+                return True
+            curr_id = parent
+        return False
+
+    def _move_folder_to_folder(self, target_folder_id: int, source_folder_id: int):
+        """Move source_folder_id inside target_folder_id after checking for circular references."""
+        if self._is_descendant(source_folder_id, target_folder_id):
+            QMessageBox.warning(
+                self,
+                "Invalid Move",
+                "Cannot move a folder into its own subfolder."
+            )
+            return
+
+        result = api_client.update_folder(source_folder_id, parent_folder_id=target_folder_id)
+        if result.get("success"):
+            updated_folder = result.get("data")
+            if updated_folder:
+                for f in self._cached_folders:
+                    if f["id"] == source_folder_id:
+                        f["parent_folder_id"] = target_folder_id
+                        break
+            self._restore_current_view()
+        else:
+            QMessageBox.warning(
+                self,
+                "Error",
+                result.get("error", "Failed to move folder")
+            )
+
+    def _on_move_folder(self, folder_id: int, current_name: str):
+        """Show dialog allowing user to move folder_id inside another folder or to Root."""
+        folders = self._cached_folders
+        # Exclude the folder itself and its descendants to prevent circular loops
+        valid_folders = [f for f in folders if f["id"] != folder_id and not self._is_descendant(folder_id, f["id"])]
+        
+        folder_names = ["Root"] + [f["name"] for f in valid_folders]
+        folder_ids = [None] + [f["id"] for f in valid_folders]
+        
+        curr_folder = next((f for f in folders if f["id"] == folder_id), None)
+        curr_parent_id = curr_folder.get("parent_folder_id") if curr_folder else None
+        
+        current_idx = 0
+        if curr_parent_id is not None:
+            try:
+                current_idx = folder_ids.index(curr_parent_id)
+            except ValueError:
+                current_idx = 0
+                
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Move Folder",
+            f"Move folder '{current_name}' to:",
+            folder_names,
+            current_idx,
+            False,
+        )
+        if ok and choice:
+            idx = folder_names.index(choice)
+            target_parent_id = folder_ids[idx]
+            result = api_client.update_folder(folder_id, parent_folder_id=target_parent_id)
+            if result.get("success"):
+                for f in self._cached_folders:
+                    if f["id"] == folder_id:
+                        f["parent_folder_id"] = target_parent_id
+                        break
+                self._restore_current_view()
+            else:
+                QMessageBox.warning(
+                    self, "Error", result.get("error", "Failed to move folder")
+                )
 
     def _on_image_clicked(self, image_id: int):
         image_data = self._get_cached_image(image_id)
@@ -3338,13 +3521,14 @@ class DashboardWindow(QWidget):
         if dialog.exec_() == QDialog.Accepted:
             name, description = dialog.get_values()
             if name:
-                result = api_client.create_folder(name, description)
+                parent_id = self._current_folder_id if self._current_view == "folder" else None
+                result = api_client.create_folder(name, description, parent_folder_id=parent_id)
                 if result.get("success"):
                     new_folder = result.get("data")
                     if new_folder:
                         new_folder["image_count"] = 0
                         self._cached_folders.insert(0, new_folder)
-                        self._add_folder_card_widget(new_folder)
+                        self._restore_current_view()
                 else:
                     QMessageBox.warning(
                         self,
@@ -3353,52 +3537,157 @@ class DashboardWindow(QWidget):
                     )
 
     def _on_delete_folder(self, folder_id: int, folder_name: str):
+        # Find parent_folder_id of the deleted folder
+        target_folder = next((f for f in self._cached_folders if f["id"] == folder_id), None)
+        parent_id = target_folder.get("parent_folder_id") if target_folder else None
+
         msg = QMessageBox(self)
         msg.setWindowTitle("Delete Folder")
         msg.setText(f"Delete folder '{folder_name}'?")
-        msg.setInformativeText("Choose how to handle the images inside.")
-        keep_btn = msg.addButton(
-            "Delete Folder (Keep Images)", QMessageBox.AcceptRole
+        msg.setInformativeText("Choose how to handle any subfolders and images inside:")
+        
+        promote_btn = msg.addButton(
+            "Promote Contents (Move to Parent/Root)", QMessageBox.AcceptRole
         )
         delete_all_btn = msg.addButton(
-            "Delete Folder + All Images", QMessageBox.DestructiveRole
+            "Delete Folder + All Contents Recursively", QMessageBox.DestructiveRole
         )
         msg.addButton("Cancel", QMessageBox.RejectRole)
         msg.exec_()
 
         clicked = msg.clickedButton()
-        delete_images = False
-        if clicked == keep_btn:
-            delete_images = False
+        if clicked == promote_btn:
+            action = "promote"
         elif clicked == delete_all_btn:
-            delete_images = True
+            action = "delete_all"
         else:
             return
 
-        result = api_client.delete_folder(folder_id, delete_images=delete_images)
+        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+        try:
+            if action == "promote":
+                # 1. Promote subfolders to parent_id
+                subfolders = [f for f in self._cached_folders if f.get("parent_folder_id") == folder_id]
+                failed_folders = []
+                for sf in subfolders:
+                    res = api_client.update_folder(sf["id"], parent_folder_id=parent_id)
+                    if res.get("success"):
+                        sf["parent_folder_id"] = parent_id
+                    else:
+                        failed_folders.append(sf["name"])
 
-        if result.get("success"):
-            # Update local cache
-            self._cached_folders = [f for f in self._cached_folders if f["id"] != folder_id]
-            if delete_images:
-                # Remove all images inside this folder
-                self._cached_images = [img for img in self._cached_images if img.get("folder_id") != folder_id]
-            else:
-                # Set folder_id to None for all images inside this folder
+                # 2. Promote images in this folder to parent_id
+                images = [img for img in self._cached_images if img.get("folder_id") == folder_id]
+                failed_images = []
+                for img in images:
+                    res = api_client.move_image_to_folder(img["id"], folder_id=parent_id)
+                    if res.get("success"):
+                        img["folder_id"] = parent_id
+                    else:
+                        failed_images.append(img.get("filename") or f"Image ID {img['id']}")
+
+                # Report promote partial failures if any
+                if failed_folders or failed_images:
+                    QApplication.restoreOverrideCursor()
+                    QMessageBox.warning(
+                        self,
+                        "Partial Failures",
+                        f"Failed to promote some items:\n"
+                        f"Folders: {', '.join(failed_folders) if failed_folders else 'None'}\n"
+                        f"Images: {', '.join(failed_images) if failed_images else 'None'}"
+                    )
+                    QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+
+                # 3. Delete the folder row
+                res = api_client.delete_folder(folder_id, delete_images=False)
+                if res.get("success"):
+                    self._cached_folders = [f for f in self._cached_folders if f["id"] != folder_id]
+                    # If currently viewing this folder, go back
+                    if self._current_view == "folder" and self._current_folder_id == folder_id:
+                        self._on_nav_back()
+                    else:
+                        self._restore_current_view()
+                else:
+                    QApplication.restoreOverrideCursor()
+                    QMessageBox.warning(
+                        self,
+                        "Error",
+                        res.get("error", "Failed to delete the folder itself.")
+                    )
+
+            elif action == "delete_all":
+                # 1. Collect all subfolder IDs and images recursively
+                folder_ids = [folder_id]
+                image_ids = []
+                
+                # Stack for DFS
+                subfolder_map = {}
+                for f in self._cached_folders:
+                    p_id = f.get("parent_folder_id")
+                    if p_id is not None:
+                        subfolder_map.setdefault(p_id, []).append(f["id"])
+                        
+                stack = [folder_id]
+                visited = set()
+                while stack:
+                    curr = stack.pop()
+                    if curr in visited:
+                        continue
+                    visited.add(curr)
+                    if curr != folder_id:
+                        folder_ids.append(curr)
+                    children = subfolder_map.get(curr, [])
+                    for child in children:
+                        if child not in visited:
+                            stack.append(child)
+
+                # Collect all images inside any of these folders
                 for img in self._cached_images:
-                    if img.get("folder_id") == folder_id:
-                        img["folder_id"] = None
-            
-            # If current view was the deleted folder, navigate back to root/all
-            if self._current_view == "folder" and self._current_folder_id == folder_id:
-                self._on_nav_all()
-            else:
-                if delete_images:
-                    self._remove_folder_card_widget(folder_id)
+                    if img.get("folder_id") in folder_ids:
+                        image_ids.append(img)
+
+                failed_images = []
+                # Handle storage deletion before DB deletion (built into delete_image API method)
+                for img in image_ids:
+                    res = api_client.delete_image(img["id"])
+                    if res.get("success"):
+                        self._cached_images = [i for i in self._cached_images if i["id"] != img["id"]]
+                    else:
+                        failed_images.append(img.get("filename") or f"Image ID {img['id']}")
+
+                failed_folders = []
+                # Delete folders bottom-up (reverse order of DFS traversal is perfect since parents are pushed first)
+                for fid in reversed(folder_ids):
+                    res = api_client.delete_folder(fid, delete_images=False)
+                    if res.get("success"):
+                        self._cached_folders = [f for f in self._cached_folders if f["id"] != fid]
+                    else:
+                        fname = next((f["name"] for f in self._cached_folders if f["id"] == fid), f"Folder ID {fid}")
+                        failed_folders.append(fname)
+
+                # Report recursive delete partial failures if any
+                QApplication.restoreOverrideCursor()
+                if failed_folders or failed_images:
+                    QMessageBox.warning(
+                        self,
+                        "Partial Failures During Deletion",
+                        f"Failed to delete some items:\n"
+                        f"Folders: {', '.join(failed_folders) if failed_folders else 'None'}\n"
+                        f"Images: {', '.join(failed_images) if failed_images else 'None'}"
+                    )
+
+                # Navigate back if current folder was deleted
+                if self._current_view == "folder" and self._current_folder_id in folder_ids:
+                    self._folder_nav_history = [(fid, name) for fid, name in self._folder_nav_history if fid not in folder_ids]
+                    self._on_nav_back()
                 else:
                     self._restore_current_view()
-        else:
-            QMessageBox.warning(self, "Error", "Failed to delete folder")
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Exception Occurred", f"An error occurred during folder deletion: {str(e)}")
+        finally:
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
 
     def _on_rename_folder(self, folder_id: int, current_name: str):
         new_name, ok = QInputDialog.getText(

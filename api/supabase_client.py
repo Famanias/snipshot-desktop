@@ -38,6 +38,9 @@ from config import SUPABASE_URL, SUPABASE_ANON_KEY
 # Name of the storage bucket used for user images
 _IMAGE_BUCKET = "images"
 
+# Sentinel to distinguish between "not provided" and "set to None"
+_UNSET = object()
+
 
 class SupabaseAPIClient:
     """Direct Supabase client for auth, folder, and image operations."""
@@ -183,18 +186,20 @@ class SupabaseAPIClient:
         except Exception as e:
             return self._err(e)
 
-    def create_folder(self, name: str, description: str = "") -> dict:
+    def create_folder(self, name: str, description: str = "", parent_folder_id: int = None) -> dict:
         """Create a new folder for the current user."""
         try:
+            insert_data = {
+                "name": name,
+                "description": description,
+                "user_id": self.user.id,
+            }
+            if parent_folder_id is not None:
+                insert_data["parent_folder_id"] = parent_folder_id
+
             res = (
                 self.client.table("folders")
-                .insert(
-                    {
-                        "name": name,
-                        "description": description,
-                        "user_id": self.user.id,
-                    }
-                )
+                .insert(insert_data)
                 .execute()
             )
             return self._ok(res.data[0] if res.data else None)
@@ -216,15 +221,18 @@ class SupabaseAPIClient:
             return self._err(e)
 
     def update_folder(
-        self, folder_id: int, name: str = None, description: str = None
+        self, folder_id: int, name: str = None, description: str = None, parent_folder_id: Any = _UNSET
     ) -> dict:
-        """Update the name and/or description of an existing folder."""
+        """Update the name and/or description/parent of an existing folder."""
         try:
             updates = {}
             if name is not None:
                 updates["name"] = name
             if description is not None:
                 updates["description"] = description
+            if parent_folder_id is not _UNSET:
+                updates["parent_folder_id"] = parent_folder_id
+                
             if not updates:
                 return self._err("Nothing to update")
             res = (

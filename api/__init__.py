@@ -23,7 +23,7 @@ Rollback to the old HTTP client is also supported:
     api_client.set_impl(APIClient())
 """
 
-from .supabase_client import SupabaseAPIClient
+from .supabase_client import SupabaseAPIClient, _UNSET
 from .translator_client import TranslatorClient
 from .client import APIClient  # kept for rollback / local dev
 from local_api.client import LocalAPIClient
@@ -65,4 +65,4 @@ class _ClientProxy:
 
 api_client = _ClientProxy(_default_client)
 
-__all__ = ["api_client", "SupabaseAPIClient", "TranslatorClient", "APIClient"]
+__all__ = ["api_client", "SupabaseAPIClient", "TranslatorClient", "APIClient", "_UNSET"]

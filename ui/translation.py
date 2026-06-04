@@ -130,6 +130,7 @@ class TranslationWindow(QDialog):
         self.translation_config = translation_config
         self.translated_bytes = None
         self.folders = []
+        self.translation_success = False
 
         self._setup_ui()
         self._load_folders()
@@ -297,6 +298,7 @@ class TranslationWindow(QDialog):
 
     def _on_translation_complete(self, data: dict):
         """Handle translation completion."""
+        self.translation_success = True
         self.translated_bytes = data.get("image_bytes")
         c = theme.c
 

@@ -55,3 +55,5 @@ INPAINTING_SIZE_STEP = 256
 
 # Shortcut key (default: Print Screen)
 DEFAULT_SHORTCUT_KEY = 0x01000009  # Qt.Key_Print (Print Screen)
+DEFAULT_CONTINUOUS_SHORTCUT_KEY = 0x01000038  # Qt.Key_F9
+

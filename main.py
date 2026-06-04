@@ -21,8 +21,11 @@ import logging
 import traceback
 from pathlib import Path
 import platformdirs
-from PyQt5.QtWidgets import QApplication, QMainWindow, QStackedWidget, QSystemTrayIcon, QMenu, QAction
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QStackedWidget, QSystemTrayIcon, QMenu, QAction,
+    QWidget, QHBoxLayout, QFrame, QLabel, QPushButton
+)
+from PyQt5.QtCore import Qt, QTimer, QPoint
 from PyQt5.QtGui import QIcon, QPixmap
 
 # Setup crash logging
@@ -46,7 +49,7 @@ def handle_exception(exc_type, exc_value, exc_tb):
 sys.excepthook = handle_exception
 
 
-from config import APP_NAME, APP_VERSION, DEFAULT_SHORTCUT_KEY
+from config import APP_NAME, APP_VERSION, DEFAULT_SHORTCUT_KEY, DEFAULT_CONTINUOUS_SHORTCUT_KEY
 from ui import (
     theme,
     get_main_stylesheet,
@@ -66,6 +69,7 @@ _DASHBOARD_WINDOW_SIZE = (1200, 800)
 _WM_HOTKEY = 0x0312       # Windows WM_HOTKEY message
 _MOD_NOREPEAT = 0x4000    # Suppress repeated triggers while key is held
 _SNIP_HOTKEY_ID = 1       # Arbitrary ID for our registered hotkey
+_CONTINUOUS_HOTKEY_ID = 2  # Arbitrary ID for our continuous registered hotkey
 
 # Qt key code → Windows Virtual Key code.
 # ASCII range 0x20–0x7E maps 1-to-1 and is handled at runtime.
@@ -106,6 +110,146 @@ def _qt_key_to_vk(qt_key: int):
     return None
 
 
+class ContinuousModeHUD(QWidget):
+    """
+    A floating, stays-on-top, draggable HUD overlay that shows
+    the state of Continuous Snipping Mode.
+    """
+    def __init__(self, main_window):
+        super().__init__(None) # No parent so it can float freely
+        self.main_window = main_window
+        
+        self.setWindowFlags(
+            Qt.FramelessWindowHint |
+            Qt.WindowStaysOnTopHint |
+            Qt.Tool |
+            Qt.SubWindow |
+            Qt.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self.setFixedSize(260, 48)
+        
+        self.drag_position = QPoint()
+        self._setup_ui()
+        self.set_state("ready")
+
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Background frame for styling
+        self.container = QFrame(self)
+        self.container.setObjectName("Container")
+        self.container.setFixedSize(260, 48)
+        
+        container_layout = QHBoxLayout(self.container)
+        container_layout.setContentsMargins(16, 0, 16, 0)
+        container_layout.setSpacing(12)
+        
+        # Status Dot
+        self.dot = QLabel()
+        self.dot.setFixedSize(10, 10)
+        
+        # Status Label
+        self.label = QLabel("Continuous: Ready")
+        
+        # Action button
+        self.action_btn = QPushButton("Pause")
+        self.action_btn.setFixedSize(65, 26)
+        self.action_btn.setCursor(Qt.PointingHandCursor)
+        self.action_btn.clicked.connect(self._on_action_clicked)
+        
+        container_layout.addWidget(self.dot)
+        container_layout.addWidget(self.label)
+        container_layout.addStretch()
+        container_layout.addWidget(self.action_btn)
+        
+        layout.addWidget(self.container)
+        
+        self._apply_style()
+        theme.theme_changed.connect(self._apply_style)
+
+    def _apply_style(self):
+        c = theme.c
+        # Beautiful glassmorphism style
+        self.container.setStyleSheet(f"""
+            QFrame#Container {{
+                background-color: {theme.rgba('surface', 0.85)};
+                border: 1px solid {c['border']};
+                border-radius: 24px;
+            }}
+        """)
+        self.label.setStyleSheet(f"""
+            QLabel {{
+                color: {c['text']};
+                font-size: 12px;
+                font-weight: 600;
+                background-color: transparent;
+                border: none;
+            }}
+        """)
+        self.action_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['surface_alt']};
+                color: {c['text']};
+                border: 1px solid {c['border']};
+                border-radius: 13px;
+                font-size: 11px;
+                font-weight: 600;
+                padding: 0px;
+                min-height: 26px;
+                max-height: 26px;
+                min-width: 65px;
+            }}
+            QPushButton:hover {{
+                background-color: {c['hover']};
+                border-color: {c['primary']};
+            }}
+        """)
+
+    def set_state(self, state: str):
+        """
+        Set status indicator state:
+        - "ready": waiting for user to press hotkey (Green dot)
+        - "capturing": capture overlay is active (Blue dot)
+        - "translating": translating the image (Orange/Yellow dot)
+        - "paused": continuous mode is paused (Gray dot)
+        """
+        if state == "ready":
+            self.dot.setStyleSheet("border-radius: 5px; background-color: #10B981;") # Green
+            self.label.setText("Continuous: Ready")
+            self.action_btn.setText("Pause")
+            self.action_btn.show()
+        elif state == "capturing":
+            self.dot.setStyleSheet("border-radius: 5px; background-color: #0EA5E9;") # Blue
+            self.label.setText("Continuous: Snipping")
+            self.action_btn.hide()
+        elif state == "translating":
+            self.dot.setStyleSheet("border-radius: 5px; background-color: #F59E0B;") # Yellow/Orange
+            self.label.setText("Continuous: Translating")
+            self.action_btn.hide()
+        elif state == "paused":
+            self.dot.setStyleSheet("border-radius: 5px; background-color: #6B7280;") # Gray
+            self.label.setText("Continuous: Paused")
+            self.action_btn.setText("Resume")
+            self.action_btn.show()
+
+    def _on_action_clicked(self):
+        self.main_window.toggle_continuous_pause()
+
+    # Draggable functionality
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton:
+            self.move(event.globalPos() - self.drag_position)
+            event.accept()
+
+
 class MainWindow(QMainWindow):
     """
     Main application window.
@@ -139,7 +283,13 @@ class MainWindow(QMainWindow):
 
         # System-wide hotkey (Win32 RegisterHotKey)
         self._current_hotkey_vk = None
+        self._current_continuous_hotkey_vk = None
+        self._continuous_paused = False
+        self._translation_in_progress = False
+        self.continuous_hud = None
+
         self._install_snip_shortcut(DEFAULT_SHORTCUT_KEY)
+        self._install_continuous_snip_shortcut(DEFAULT_CONTINUOUS_SHORTCUT_KEY)
     
     def _create_screens(self):
         """Create all application screens"""
@@ -163,6 +313,8 @@ class MainWindow(QMainWindow):
         self.dashboard.capture_requested.connect(self._start_capture)
         self.dashboard.upload_requested.connect(self._on_upload_image)
         self.dashboard.shortcut_changed.connect(self._install_snip_shortcut)
+        self.dashboard.continuous_mode_changed.connect(self._on_continuous_mode_changed)
+        self.dashboard.continuous_shortcut_changed.connect(self._install_continuous_snip_shortcut)
         self.stack.addWidget(self.dashboard)
     
     def _show_login(self):
@@ -269,50 +421,146 @@ class MainWindow(QMainWindow):
         if success:
             self._current_hotkey_vk = vk
 
+    def _install_continuous_snip_shortcut(self, key: int = None):
+        """
+        Register (or re-register) a system-wide hotkey via Win32 RegisterHotKey for continuous snip.
+        """
+        if key is None:
+            key = DEFAULT_CONTINUOUS_SHORTCUT_KEY
+
+        user32 = ctypes.windll.user32
+        hwnd = int(self.winId())
+
+        if self._current_continuous_hotkey_vk is not None:
+            user32.UnregisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID)
+            self._current_continuous_hotkey_vk = None
+
+        vk = _qt_key_to_vk(key)
+        if vk is None:
+            return
+
+        success = user32.RegisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID, _MOD_NOREPEAT, vk)
+        if not success:
+            success = user32.RegisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID, 0, vk)
+
+        if success:
+            self._current_continuous_hotkey_vk = vk
+
     def nativeEvent(self, eventType, message):
-        """Intercept WM_HOTKEY to trigger the snip shortcut globally."""
+        """Intercept WM_HOTKEY to trigger the snip shortcuts globally."""
         if eventType == b"windows_generic_MSG":
             msg = ctypes.cast(
                 int(message),
                 ctypes.POINTER(ctypes.wintypes.MSG)
             ).contents
-            if msg.message == _WM_HOTKEY and msg.wParam == _SNIP_HOTKEY_ID:
-                self._start_capture()
-                return True, 0
+            if msg.message == _WM_HOTKEY:
+                if msg.wParam == _SNIP_HOTKEY_ID:
+                    self._start_capture(continuous=False)
+                    return True, 0
+                elif msg.wParam == _CONTINUOUS_HOTKEY_ID:
+                    self._start_capture(continuous=True)
+                    return True, 0
         return super().nativeEvent(eventType, message)
 
     def closeEvent(self, event):
-        """Unregister the hotkey when the window closes."""
+        """Unregister hotkeys and close HUD when the window closes."""
+        user32 = ctypes.windll.user32
+        hwnd = int(self.winId())
         if self._current_hotkey_vk is not None:
-            ctypes.windll.user32.UnregisterHotKey(int(self.winId()), _SNIP_HOTKEY_ID)
+            user32.UnregisterHotKey(hwnd, _SNIP_HOTKEY_ID)
+        if self._current_continuous_hotkey_vk is not None:
+            user32.UnregisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID)
+        if hasattr(self, "continuous_hud") and self.continuous_hud is not None:
+            self.continuous_hud.close()
         super().closeEvent(event)
 
     def _on_logout(self):
         """Handle logout"""
         api_client.reset()
         self._show_login()
-    
-    def _start_capture(self):
+        if hasattr(self, "continuous_hud") and self.continuous_hud is not None:
+            self.continuous_hud.hide()
+
+    def _on_continuous_mode_changed(self, enabled: bool):
+        self._continuous_paused = False
+        self._update_indicator()
+        if enabled:
+            self._start_capture()
+
+    def toggle_continuous_pause(self):
+        self._set_continuous_paused(not self._continuous_paused)
+        if not self._continuous_paused:
+            self._start_capture()
+
+    def _set_continuous_paused(self, paused: bool):
+        self._continuous_paused = paused
+        self._update_indicator()
+
+    def _update_indicator(self):
+        if (hasattr(self, "dashboard") and 
+            self.dashboard.continuous_mode_enabled and 
+            api_client.is_authenticated and 
+            self.stack.currentWidget() == self.dashboard):
+            
+            if self.continuous_hud is None:
+                self.continuous_hud = ContinuousModeHUD(self)
+            
+            # Position at the bottom-right corner of screen (respecting taskbar)
+            available_rect = QApplication.primaryScreen().availableGeometry()
+            self.continuous_hud.move(
+                available_rect.right() - self.continuous_hud.width() - 20,
+                available_rect.bottom() - self.continuous_hud.height() - 20
+            )
+            self.continuous_hud.show()
+            self.continuous_hud.raise_()
+            
+            if self._continuous_paused:
+                self.continuous_hud.set_state("paused")
+            elif self._translation_in_progress:
+                self.continuous_hud.set_state("translating")
+            elif self.capture_widget is not None and self.capture_widget.isVisible():
+                self.continuous_hud.set_state("capturing")
+            else:
+                self.continuous_hud.set_state("ready")
+        else:
+            if hasattr(self, "continuous_hud") and self.continuous_hud is not None:
+                self.continuous_hud.hide()
+
+    def _start_capture(self, continuous: bool | None = None):
         """Start screen capture"""
-        # Ignore if not logged in, not on the dashboard, or a capture is already in progress
+        # Ignore if not logged in, not on the dashboard
         if self.stack.currentWidget() != self.dashboard:
             return
         if not api_client.is_authenticated:
             return
+            
+        if continuous is not None:
+            self.dashboard._set_continuous_mode(continuous)
+
+        # Ignore if a capture or translation is already in progress
         if self.capture_widget is not None and self.capture_widget.isVisible():
             return
+        if self._translation_in_progress:
+            return
 
+        if self.dashboard.continuous_mode_enabled:
+            self._continuous_paused = False
+
+        self._update_indicator()
         self.hide()
 
         # Small delay to ensure window is hidden
         QTimer.singleShot(100, self._do_capture)
-    
+
     def _do_capture(self):
         """Actually perform the capture"""
         self.capture_widget = CaptureWidget(self)
         self.capture_widget.captured.connect(self._on_capture_complete)
         self.capture_widget.cancelled.connect(self._on_capture_cancelled)
         self.capture_widget.show()
+        self.capture_widget.activateWindow()
+        self.capture_widget.setFocus()
+        self._update_indicator()
     
     def _on_capture_complete(self, pixmap: QPixmap, temp_path: str):
         """Handle completed capture"""
@@ -321,6 +569,9 @@ class MainWindow(QMainWindow):
         # Check if user is authenticated
         if not api_client.is_authenticated:
             return
+
+        self._translation_in_progress = True
+        self._update_indicator()
         
         # Open translation dialog
         self.translation_window = TranslationWindow(
@@ -330,12 +581,30 @@ class MainWindow(QMainWindow):
             translation_config=self.dashboard.get_translation_config(),
         )
         self.translation_window.saved.connect(self.dashboard.add_saved_image)
-        self.translation_window.exec_()
+        
+        try:
+            self.translation_window.exec_()
+        finally:
+            self._translation_in_progress = False
+            
+            # Check success of translation
+            success = getattr(self.translation_window, "translation_success", False)
+            
+            # If it failed/errored/cancelled, auto-pause continuous mode to prevent loop
+            if not success and self.dashboard.continuous_mode_enabled:
+                self._continuous_paused = True
+                
+            self._update_indicator()
+            
+            # Auto-reactivate ONLY if continuous mode is enabled, succeeded, and not paused
+            if self.dashboard.continuous_mode_enabled and success and not self._continuous_paused:
+                self._start_capture()
 
     def _on_capture_cancelled(self):
         """Handle cancelled capture"""
         # Note: Parent window is already shown by CaptureWidget
-        pass
+        if self.dashboard.continuous_mode_enabled:
+            self._set_continuous_paused(True)
 
     def _on_upload_image(self, file_path: str):
         """Handle image upload — open TranslationWindow with the chosen file"""

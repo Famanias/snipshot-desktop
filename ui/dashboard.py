@@ -44,7 +44,7 @@ from PyQt5.QtCore import QUrl
 from api import api_client
 from config import (
     TRANSLATION_TARGET_LANG, TRANSLATION_INPAINTER,
-    DEFAULT_SHORTCUT_KEY,
+    DEFAULT_SHORTCUT_KEY, DEFAULT_CONTINUOUS_SHORTCUT_KEY,
     DETECTION_SIZE_MIN, DETECTION_SIZE_MAX, DETECTION_SIZE_STEP,
     BOX_THRESHOLD_MIN, BOX_THRESHOLD_MAX,
     INPAINTING_SIZE_MIN, INPAINTING_SIZE_MAX, INPAINTING_SIZE_STEP,
@@ -1126,6 +1126,8 @@ class DashboardWindow(QWidget):
     capture_requested = pyqtSignal()
     upload_requested = pyqtSignal(str)
     shortcut_changed = pyqtSignal(int)
+    continuous_mode_changed = pyqtSignal(bool)
+    continuous_shortcut_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1138,6 +1140,8 @@ class DashboardWindow(QWidget):
         self.active_nav = "all"
         self.target_language = TRANSLATION_TARGET_LANG
         self.snip_shortcut_key = DEFAULT_SHORTCUT_KEY
+        self.continuous_mode_enabled = False
+        self.continuous_shortcut_key = DEFAULT_CONTINUOUS_SHORTCUT_KEY
         self.detection_size = 1536
         self.box_threshold = 0.7
         self.inpainting_size = 2048
@@ -2417,6 +2421,40 @@ class DashboardWindow(QWidget):
                 }}
             """
 
+    def _continuous_pill_style(self, active: bool) -> str:
+        """Style for continuous mode segmented control button."""
+        c = theme.c
+        if active:
+            return f"""
+                QPushButton {{
+                    padding: {SPACE['xs']}px {SPACE['lg']}px;
+                    background-color: {c['primary']};
+                    color: #ffffff;
+                    border: 1px solid {c['primary']};
+                    border-radius: {SPACE['xs']}px;
+                    font-size: {FONT['label']['size']}px;
+                    font-weight: 600;
+                    min-width: 140px;
+                }}
+            """
+        else:
+            return f"""
+                QPushButton {{
+                    padding: {SPACE['xs']}px {SPACE['lg']}px;
+                    background-color: transparent;
+                    color: {c['text_secondary']};
+                    border: 1px solid {c['border']};
+                    border-radius: {SPACE['xs']}px;
+                    font-size: {FONT['label']['size']}px;
+                    font-weight: 500;
+                    min-width: 140px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['hover']};
+                    color: {c['text']};
+                }}
+            """
+
     def _render_settings_content(self):
         c = theme.c
 
@@ -2459,11 +2497,11 @@ class DashboardWindow(QWidget):
         self.content_layout.addLayout(toggle_row)
         self.content_layout.addSpacing(SPACE["lg"])
 
-        # ── Capture Shortcut ──────────────────────────────────────────
-        self.content_layout.addWidget(self._section_header_label("", "Capture Shortcut"))
+        # ── Capture Shortcuts ──────────────────────────────────────────
+        self.content_layout.addWidget(self._section_header_label("", "Capture Shortcuts"))
         self.content_layout.addSpacing(SPACE["xs"])
 
-        sc_label = QLabel("Keyboard Shortcut")
+        sc_label = QLabel("Single Snip Shortcut")
         sc_label.setStyleSheet(
             f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
             "background-color: transparent; border: none;"
@@ -2497,6 +2535,70 @@ class DashboardWindow(QWidget):
         sc_row.addWidget(self.shortcut_btn)
         sc_row.addStretch()
         self.content_layout.addLayout(sc_row)
+        self.content_layout.addSpacing(SPACE["md"])
+
+        csc_label = QLabel("Continuous Snip Shortcut")
+        csc_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
+            "background-color: transparent; border: none;"
+        )
+        self.content_layout.addWidget(csc_label)
+        self.content_layout.addSpacing(SPACE["sm"])
+
+        csc_row = QHBoxLayout()
+        csc_row.setSpacing(SPACE["sm"])
+
+        self.continuous_shortcut_display = QLabel(self._key_name(self.continuous_shortcut_key))
+        self.continuous_shortcut_display.setAlignment(Qt.AlignCenter)
+        self.continuous_shortcut_display.setStyleSheet(f"""
+            QLabel {{
+                padding: {SPACE['sm']}px {SPACE['lg']}px;
+                border: 1px solid {c['border']};
+                border-bottom: 3px solid {c['border']};
+                border-radius: {SPACE['xs']}px;
+                font-size: {FONT['label']['size']}px;
+                font-weight: 700;
+                background-color: {c['surface_alt']};
+                color: {c['text']};
+                min-width: 80px;
+                letter-spacing: 1px;
+            }}
+        """)
+        csc_row.addWidget(self.continuous_shortcut_display)
+
+        self.continuous_shortcut_btn = _ShortcutButton("Change Shortcut")
+        self.continuous_shortcut_btn.shortcut_captured.connect(self._on_continuous_shortcut_captured)
+        csc_row.addWidget(self.continuous_shortcut_btn)
+        csc_row.addStretch()
+        self.content_layout.addLayout(csc_row)
+        self.content_layout.addSpacing(SPACE["lg"])
+
+        # ── Continuous Snipping ────────────────────────────────────────
+        self.content_layout.addWidget(self._section_header_label("", "Continuous Snipping"))
+        self.content_layout.addSpacing(SPACE["xs"])
+
+        self.content_layout.addWidget(self._hint_label(
+            "Choose whether to capture one screen region at a time or automatically return to capturing."
+        ))
+        self.content_layout.addSpacing(SPACE["sm"])
+
+        cont_row = QHBoxLayout()
+        cont_row.setSpacing(SPACE["sm"])
+
+        self.single_snip_btn = QPushButton("Single Snip")
+        self.single_snip_btn.setCursor(Qt.PointingHandCursor)
+        self.single_snip_btn.setStyleSheet(self._continuous_pill_style(not self.continuous_mode_enabled))
+        self.single_snip_btn.clicked.connect(lambda: self._set_continuous_mode(False))
+
+        self.continuous_snip_btn = QPushButton("Continuous Snip")
+        self.continuous_snip_btn.setCursor(Qt.PointingHandCursor)
+        self.continuous_snip_btn.setStyleSheet(self._continuous_pill_style(self.continuous_mode_enabled))
+        self.continuous_snip_btn.clicked.connect(lambda: self._set_continuous_mode(True))
+
+        cont_row.addWidget(self.single_snip_btn)
+        cont_row.addWidget(self.continuous_snip_btn)
+        cont_row.addStretch()
+        self.content_layout.addLayout(cont_row)
         self.content_layout.addSpacing(SPACE["lg"])
 
         # ── Translation Settings ───────────────────────────────────────
@@ -2725,6 +2827,19 @@ class DashboardWindow(QWidget):
         if hasattr(self, "shortcut_display"):
             self.shortcut_display.setText(self._key_name(key))
         self.shortcut_changed.emit(key)
+
+    def _on_continuous_shortcut_captured(self, key: int):
+        self.continuous_shortcut_key = key
+        if hasattr(self, "continuous_shortcut_display"):
+            self.continuous_shortcut_display.setText(self._key_name(key))
+        self.continuous_shortcut_changed.emit(key)
+
+    def _set_continuous_mode(self, enabled: bool):
+        self.continuous_mode_enabled = enabled
+        if hasattr(self, "single_snip_btn") and hasattr(self, "continuous_snip_btn"):
+            self.single_snip_btn.setStyleSheet(self._continuous_pill_style(not enabled))
+            self.continuous_snip_btn.setStyleSheet(self._continuous_pill_style(enabled))
+        self.continuous_mode_changed.emit(enabled)
 
     def _on_detection_size_changed(self, value: int):
         if hasattr(self, "detection_size_value"):

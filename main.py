@@ -693,25 +693,52 @@ class MainWindow(QMainWindow):
         if self.dashboard.continuous_mode_enabled:
             self._set_continuous_paused(True)
 
-    def _on_upload_image(self, file_path: str):
-        """Handle image upload — open TranslationWindow with the chosen file"""
+    def _on_upload_image(self, file_paths: list):
+        """Handle multiple image uploads — queue them for background translation"""
         if not api_client.is_authenticated:
             return
 
-        pixmap = QPixmap(file_path)
-        if pixmap.isNull():
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Upload Error", f"Could not load image:\n{file_path}")
-            return
+        from PyQt5.QtWidgets import QMessageBox
+        
+        queued_any = False
+        
+        for file_path in file_paths:
+            pixmap = QPixmap(file_path)
+            if pixmap.isNull():
+                QMessageBox.warning(self, "Upload Error", f"Could not load image:\n{file_path}")
+                continue
 
-        self.translation_window = TranslationWindow(
-            pixmap,
-            self,
-            target_language=self.dashboard.get_target_language(),
-            translation_config=self.dashboard.get_translation_config(),
-        )
-        self.translation_window.saved.connect(self.dashboard.add_saved_image)
-        self.translation_window.exec_()
+            self._queue_snip_counter += 1
+            item_id = f"upload_{self._queue_snip_counter}"
+            filename = os.path.basename(file_path)
+            
+            folder_id = self.dashboard.current_folder_id
+            target_language = self.dashboard.get_target_language()
+            
+            # Convert QPixmap to bytes (PNG format)
+            buffer = QBuffer()
+            buffer.open(QIODevice.WriteOnly)
+            pixmap.save(buffer, "PNG")
+            image_bytes = buffer.data().data()
+            
+            item = {
+                "item_id": item_id,
+                "image_bytes": image_bytes,
+                "filename": filename,
+                "folder_id": folder_id,
+                "target_language": target_language,
+                "thumbnail": pixmap
+            }
+            
+            self.translation_queue.append(item)
+            self.dashboard.add_queue_item_ui(item_id, filename, target_language, pixmap)
+            queued_any = True
+
+        if queued_any:
+            if hasattr(self.dashboard, "queue_sidebar") and self.dashboard.queue_sidebar.isHidden():
+                self.dashboard.queue_sidebar.show()
+                
+            self._process_next_queue_item()
 
     def _add_to_queue(self, pixmap: QPixmap):
         self._queue_snip_counter += 1

@@ -1252,7 +1252,7 @@ class DashboardWindow(QWidget):
 
     logout_requested = pyqtSignal()
     capture_requested = pyqtSignal()
-    upload_requested = pyqtSignal(str)
+    upload_requested = pyqtSignal(list)
     shortcut_changed = pyqtSignal(int)
     continuous_mode_changed = pyqtSignal(bool)
     continuous_shortcut_changed = pyqtSignal(int)
@@ -1297,6 +1297,7 @@ class DashboardWindow(QWidget):
         self.folder_grid = None
         self.folder_grid_layout = None
         self._image_grid_widget = None
+        self._queue_widgets = {}
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -2395,14 +2396,14 @@ class DashboardWindow(QWidget):
     def _on_upload(self):
         from PyQt5.QtWidgets import QFileDialog
 
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Select Image",
+            "Select Images",
             "",
             "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
         )
-        if file_path:
-            self.upload_requested.emit(file_path)
+        if file_paths:
+            self.upload_requested.emit(file_paths)
 
     def _on_nav_all(self):
         self._load_all_files_async()

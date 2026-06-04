@@ -128,7 +128,7 @@ class ContinuousModeHUD(QWidget):
         )
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-        self.setFixedSize(260, 48)
+        self.setFixedSize(180, 48)
         
         self.drag_position = QPoint()
         self._setup_ui()
@@ -141,7 +141,7 @@ class ContinuousModeHUD(QWidget):
         # Background frame for styling
         self.container = QFrame(self)
         self.container.setObjectName("Container")
-        self.container.setFixedSize(260, 48)
+        self.container.setFixedSize(180, 48)
         
         container_layout = QHBoxLayout(self.container)
         container_layout.setContentsMargins(16, 0, 16, 0)
@@ -154,16 +154,9 @@ class ContinuousModeHUD(QWidget):
         # Status Label
         self.label = QLabel("Continuous: Ready")
         
-        # Action button
-        self.action_btn = QPushButton("Pause")
-        self.action_btn.setFixedSize(65, 26)
-        self.action_btn.setCursor(Qt.PointingHandCursor)
-        self.action_btn.clicked.connect(self._on_action_clicked)
-        
         container_layout.addWidget(self.dot)
         container_layout.addWidget(self.label)
         container_layout.addStretch()
-        container_layout.addWidget(self.action_btn)
         
         layout.addWidget(self.container)
         
@@ -189,24 +182,6 @@ class ContinuousModeHUD(QWidget):
                 border: none;
             }}
         """)
-        self.action_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {c['surface_alt']};
-                color: {c['text']};
-                border: 1px solid {c['border']};
-                border-radius: 13px;
-                font-size: 11px;
-                font-weight: 600;
-                padding: 0px;
-                min-height: 26px;
-                max-height: 26px;
-                min-width: 65px;
-            }}
-            QPushButton:hover {{
-                background-color: {c['hover']};
-                border-color: {c['primary']};
-            }}
-        """)
 
     def set_state(self, state: str):
         """
@@ -214,29 +189,16 @@ class ContinuousModeHUD(QWidget):
         - "ready": waiting for user to press hotkey (Green dot)
         - "capturing": capture overlay is active (Blue dot)
         - "translating": translating the image (Orange/Yellow dot)
-        - "paused": continuous mode is paused (Gray dot)
         """
         if state == "ready":
             self.dot.setStyleSheet("border-radius: 5px; background-color: #10B981;") # Green
             self.label.setText("Continuous: Ready")
-            self.action_btn.setText("Pause")
-            self.action_btn.show()
         elif state == "capturing":
             self.dot.setStyleSheet("border-radius: 5px; background-color: #0EA5E9;") # Blue
             self.label.setText("Continuous: Snipping")
-            self.action_btn.hide()
         elif state == "translating":
             self.dot.setStyleSheet("border-radius: 5px; background-color: #F59E0B;") # Yellow/Orange
             self.label.setText("Continuous: Translating")
-            self.action_btn.hide()
-        elif state == "paused":
-            self.dot.setStyleSheet("border-radius: 5px; background-color: #6B7280;") # Gray
-            self.label.setText("Continuous: Paused")
-            self.action_btn.setText("Resume")
-            self.action_btn.show()
-
-    def _on_action_clicked(self):
-        self.main_window.toggle_continuous_pause()
 
     # Draggable functionality
     def mousePressEvent(self, event):
@@ -357,7 +319,6 @@ class MainWindow(QMainWindow):
         # System-wide hotkey (Win32 RegisterHotKey)
         self._current_hotkey_vk = None
         self._current_continuous_hotkey_vk = None
-        self._continuous_paused = False
         self._translation_in_progress = False
         self.continuous_hud = None
         self.translation_queue = []
@@ -563,11 +524,12 @@ class MainWindow(QMainWindow):
             self.continuous_hud.hide()
 
     def _on_continuous_mode_changed(self, enabled: bool):
-        self._continuous_paused = False
         self._update_indicator()
         if enabled:
             self._start_capture()
         else:
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
             if hasattr(self, "translation_queue") and self.translation_queue:
                 for item in list(self.translation_queue):
                     self.dashboard.update_queue_item_ui(item["item_id"], "cancelled")
@@ -575,15 +537,6 @@ class MainWindow(QMainWindow):
 
     def _on_snip_interval_changed(self, interval: int):
         self._snip_interval_ms = interval
-
-    def toggle_continuous_pause(self):
-        self._set_continuous_paused(not self._continuous_paused)
-        if not self._continuous_paused:
-            self._start_capture()
-
-    def _set_continuous_paused(self, paused: bool):
-        self._continuous_paused = paused
-        self._update_indicator()
 
     def _update_indicator(self):
         if (hasattr(self, "dashboard") and 
@@ -603,9 +556,7 @@ class MainWindow(QMainWindow):
             self.continuous_hud.show()
             self.continuous_hud.raise_()
             
-            if self._continuous_paused:
-                self.continuous_hud.set_state("paused")
-            elif self.capture_widget is not None and self.capture_widget.isVisible():
+            if self.capture_widget is not None and self.capture_widget.isVisible():
                 self.continuous_hud.set_state("capturing")
             elif self._translation_in_progress:
                 self.continuous_hud.set_state("translating")
@@ -633,9 +584,6 @@ class MainWindow(QMainWindow):
         # Ignore if single-snip translation is in progress (blocks further captures)
         if not self.dashboard.continuous_mode_enabled and self._translation_in_progress:
             return
-
-        if self.dashboard.continuous_mode_enabled:
-            self._continuous_paused = False
 
         self._update_indicator()
         self.hide()
@@ -665,8 +613,8 @@ class MainWindow(QMainWindow):
             # Bypass modal and add directly to queue
             self._add_to_queue(pixmap)
             
-            # Immediately trigger next capture if not paused and continuous is still enabled
-            if self.dashboard.continuous_mode_enabled and not self._continuous_paused:
+            # Immediately trigger next capture if continuous is still enabled
+            if self.dashboard.continuous_mode_enabled:
                 QTimer.singleShot(self._snip_interval_ms, self._start_capture)
         else:
             self._translation_in_progress = True
@@ -685,21 +633,17 @@ class MainWindow(QMainWindow):
                 self.translation_window.exec_()
             finally:
                 self._translation_in_progress = False
-                
-                # Check success of translation
-                success = getattr(self.translation_window, "translation_success", False)
-                
-                # If it failed/errored/cancelled, auto-pause continuous mode to prevent loop
-                if not success and self.dashboard.continuous_mode_enabled:
-                    self._continuous_paused = True
-                    
                 self._update_indicator()
 
     def _on_capture_cancelled(self):
         """Handle cancelled capture"""
+        # Force restore override cursors to prevent lingering crosshairs
+        while QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+
         # Note: Parent window is already shown by CaptureWidget
         if self.dashboard.continuous_mode_enabled:
-            self._set_continuous_paused(True)
+            self.dashboard._set_continuous_mode(False)
 
     def _on_upload_image(self, file_paths: list):
         """Handle multiple image uploads — queue them for background translation"""

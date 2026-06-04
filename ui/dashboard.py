@@ -27,6 +27,10 @@ SnipShot Desktop - Dashboard Window
 Main dashboard with folder/image management (Google Drive-style).
 """
 
+import os
+
+SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp')
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QGridLayout, QMenu, QAction,
@@ -1130,6 +1134,204 @@ class TrashDropZone(QFrame):
             event.ignore()
 
 
+class DragDropOverlay(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.hide()
+        self._setup_ui()
+        theme.theme_changed.connect(self._apply_style)
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Inner frame for dashed border
+        self.inner_frame = QFrame()
+        inner_layout = QVBoxLayout(self.inner_frame)
+        inner_layout.setAlignment(Qt.AlignCenter)
+        inner_layout.setSpacing(SPACE["sm"])
+
+        self.icon_lbl = QLabel()
+        self.icon_lbl.setAlignment(Qt.AlignCenter)
+        inner_layout.addWidget(self.icon_lbl)
+
+        self.text_lbl = QLabel("Drop images here to translate")
+        self.text_lbl.setAlignment(Qt.AlignCenter)
+        inner_layout.addWidget(self.text_lbl)
+
+        layout.addWidget(self.inner_frame)
+        self._apply_style()
+
+    def _apply_style(self):
+        c = theme.c
+        self.inner_frame.setFixedSize(320, 200)
+        self.inner_frame.setStyleSheet(f"""
+            QFrame {{
+                border: 2px dashed {c['primary']};
+                border-radius: 16px;
+                background-color: {c['surface']};
+            }}
+        """)
+        icon_pixmap = load_icon("translate_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg").pixmap(48, 48)
+        self.icon_lbl.setPixmap(icon_pixmap)
+        self.text_lbl.setStyleSheet(f"""
+            QLabel {{
+                font-size: 16px;
+                font-weight: 600;
+                color: {c['text']};
+                background: transparent;
+            }}
+        """)
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: rgba(0, 0, 0, 0.4);
+            }}
+        """)
+
+    def set_drag_state(self, has_valid, has_folders, has_unsupported):
+        c = theme.c
+        if has_folders:
+            self.inner_frame.setStyleSheet(f"""
+                QFrame {{
+                    border: 2px dashed {c['error']};
+                    border-radius: 16px;
+                    background-color: {c['surface']};
+                }}
+            """)
+            self.text_lbl.setText("Folders are not supported")
+            self.text_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {c['error']}; background: transparent;")
+        elif has_unsupported and not has_valid:
+            self.inner_frame.setStyleSheet(f"""
+                QFrame {{
+                    border: 2px dashed {c['error']};
+                    border-radius: 16px;
+                    background-color: {c['surface']};
+                }}
+            """)
+            self.text_lbl.setText("Unsupported file type(s)")
+            self.text_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {c['error']}; background: transparent;")
+        else:
+            self.inner_frame.setStyleSheet(f"""
+                QFrame {{
+                    border: 2px dashed {c['primary']};
+                    border-radius: 16px;
+                    background-color: {c['surface']};
+                }}
+            """)
+            self.text_lbl.setText("Drop images here to translate")
+            self.text_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {c['primary']}; background: transparent;")
+
+    def dragEnterEvent(self, event):
+        has_valid, has_folders, has_unsupported = self.parent()._check_drag_data(event.mimeData())
+        self.set_drag_state(has_valid, has_folders, has_unsupported)
+        event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self.hide()
+        event.accept()
+
+    def dropEvent(self, event):
+        self.hide()
+        self.parent()._handle_file_drop(event.mimeData())
+        event.acceptProposedAction()
+
+
+class ToastNotification(QWidget):
+    def __init__(self, parent, message, type="info"):
+        super().__init__(parent)
+        self.type = type
+        self.message = message
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.close_toast)
+        self.timer.start(4000) # 4 seconds
+        self._setup_ui()
+        theme.theme_changed.connect(self._apply_style)
+
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(SPACE["sm"])
+
+        self.emoji_lbl = QLabel()
+        self.emoji_lbl.setStyleSheet("font-size: 16px; background: transparent; border: none;")
+        layout.addWidget(self.emoji_lbl)
+
+        self.text_lbl = QLabel(self.message)
+        self.text_lbl.setWordWrap(True)
+        layout.addWidget(self.text_lbl, 1)
+
+        self.close_btn = QPushButton()
+        self.close_btn.setFixedSize(16, 16)
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        self.close_btn.setIcon(load_icon("close_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.close_btn.setIconSize(QSize(10, 10))
+        self.close_btn.clicked.connect(self.close_toast)
+        layout.addWidget(self.close_btn)
+
+        self._apply_style()
+        self.adjustSize()
+        self.reposition()
+
+    def _apply_style(self):
+        c = theme.c
+        border_color = c['border']
+        if self.type == "success":
+            self.emoji_lbl.setText("✅")
+            border_color = c['primary']
+        elif self.type == "error":
+            self.emoji_lbl.setText("❌")
+            border_color = c['error']
+        else:
+            self.emoji_lbl.setText("ℹ️")
+            border_color = c['text_secondary']
+
+        self.text_lbl.setStyleSheet(f"""
+            QLabel {{
+                color: {c['text']};
+                font-size: 13px;
+                font-weight: 500;
+                background: transparent;
+                border: none;
+            }}
+        """)
+        self.close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {c['hover']};
+            }}
+        """)
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {c['surface_alt']};
+                border: 1px solid {border_color};
+                border-radius: 8px;
+            }}
+        """)
+
+    def reposition(self):
+        if not self.parent():
+            return
+        p_width = self.parent().width()
+        x = (p_width - self.width()) // 2
+        y = 70
+        self.move(x, y)
+        self.raise_()
+
+    def close_toast(self):
+        self.hide()
+        self.deleteLater()
+
+
 class ElidedLabel(QLabel):
     """A QLabel that automatically elides text to fit its width, with a tooltip of the full text."""
     def __init__(self, text="", parent=None):
@@ -1409,6 +1611,7 @@ class DashboardWindow(QWidget):
         setattr(self, attr, None)
 
     def _setup_ui(self):
+        self.setAcceptDrops(True)
         c = theme.c
 
         # Outer layout that holds TopAppBar and Split Area
@@ -1727,11 +1930,6 @@ class DashboardWindow(QWidget):
         self.q_empty_label.setStyleSheet(f"color: {c['text_secondary']}; font-size: {FONT['caption']['size']}px; padding: {SPACE['lg']}px;")
         queue_layout.addWidget(self.q_empty_label)
 
-        # Clear Completed Button
-        self.q_clear_btn = StyledButton("Clear Completed", variant="secondary")
-        self.q_clear_btn.clicked.connect(self._clear_completed_queue)
-        queue_layout.addWidget(self.q_clear_btn)
-
         split_layout.addWidget(self.sidebar)
         
         # Create a splitter for main content and queue sidebar
@@ -1753,6 +1951,9 @@ class DashboardWindow(QWidget):
         # Create floating Trash Drop Zone
         self.trash_drop_zone = TrashDropZone(self)
         self.trash_drop_zone.show()
+
+        # Create Drag & Drop Overlay
+        self.drag_drop_overlay = DragDropOverlay(self)
 
         self._apply_styles()
 
@@ -2559,11 +2760,12 @@ class DashboardWindow(QWidget):
     def _on_upload(self):
         from PyQt5.QtWidgets import QFileDialog
 
+        extensions_filter = " ".join("*" + ext for ext in SUPPORTED_IMAGE_EXTENSIONS)
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Images",
             "",
-            "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
+            f"Images ({extensions_filter})",
         )
         if file_paths:
             self.upload_requested.emit(file_paths)
@@ -3872,6 +4074,78 @@ class DashboardWindow(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._reposition_trash_drop_zone()
+        if hasattr(self, "drag_drop_overlay") and self.drag_drop_overlay:
+            self.drag_drop_overlay.setGeometry(self.rect())
+        if hasattr(self, "_current_toast") and self._current_toast:
+            self._current_toast.reposition()
+
+    def _check_drag_data(self, mime_data) -> tuple:
+        has_valid_images = False
+        has_folders = False
+        has_unsupported = False
+        
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                path = url.toLocalFile()
+                if os.path.isdir(path):
+                    has_folders = True
+                elif path.lower().endswith(SUPPORTED_IMAGE_EXTENSIONS):
+                    has_valid_images = True
+                else:
+                    has_unsupported = True
+        return has_valid_images, has_folders, has_unsupported
+
+    def dragEnterEvent(self, event):
+        has_valid, has_folders, has_unsupported = self._check_drag_data(event.mimeData())
+        if has_valid or has_folders or has_unsupported:
+            event.acceptProposedAction()
+            if hasattr(self, "drag_drop_overlay") and self.drag_drop_overlay:
+                self.drag_drop_overlay.setGeometry(self.rect())
+                self.drag_drop_overlay.set_drag_state(has_valid, has_folders, has_unsupported)
+                self.drag_drop_overlay.show()
+                self.drag_drop_overlay.raise_()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def _handle_file_drop(self, mime_data):
+        valid_files = []
+        folder_count = 0
+        unsupported_count = 0
+        
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                path = url.toLocalFile()
+                if os.path.isdir(path):
+                    folder_count += 1
+                elif path.lower().endswith(SUPPORTED_IMAGE_EXTENSIONS):
+                    if os.path.isfile(path):
+                        valid_files.append(path)
+                else:
+                    unsupported_count += 1
+                    
+        if valid_files:
+            self.upload_requested.emit(valid_files)
+            
+        if folder_count > 0 or unsupported_count > 0:
+            msg_parts = []
+            if len(valid_files) > 0:
+                msg_parts.append(f"{len(valid_files)} image(s) were added to the queue.")
+            if folder_count > 0:
+                msg_parts.append(f"{folder_count} folder(s) were ignored (folders are not supported).")
+            if unsupported_count > 0:
+                msg_parts.append(f"{unsupported_count} unsupported file(s) were ignored.")
+                
+            QMessageBox.warning(
+                self,
+                "Upload Warning",
+                "\n".join(msg_parts)
+            )
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -3913,6 +4187,15 @@ class DashboardWindow(QWidget):
         # Update badge count
         self._update_queue_badge()
 
+    def show_toast(self, message: str, type: str = "info"):
+        if hasattr(self, "_current_toast") and self._current_toast:
+            try:
+                self._current_toast.deleteLater()
+            except (RuntimeError, TypeError):
+                pass
+        self._current_toast = ToastNotification(self, message, type)
+        self._current_toast.show()
+
     def update_queue_item_ui(self, item_id: str, status: str, progress: int = 0, error_msg: str = ""):
         """Update the status of an existing item in the queue drawer."""
         if not hasattr(self, "_queue_widgets") or item_id not in self._queue_widgets:
@@ -3924,22 +4207,28 @@ class DashboardWindow(QWidget):
         # Update badge count
         self._update_queue_badge()
 
-    def _clear_completed_queue(self):
-        """Remove completed, failed, or cancelled tasks from the queue list view."""
-        if not hasattr(self, "_queue_widgets"):
+        # If terminal state, schedule removal after a short delay (1.5 seconds)
+        if status in ("completed", "failed", "cancelled"):
+            filename = widget.name_lbl._full_text if hasattr(widget, "name_lbl") else "Image"
+            if status == "completed":
+                self.show_toast(f"Translation completed for {filename}!", type="success")
+            elif status == "failed":
+                self.show_toast(f"Translation failed for {filename}: {error_msg}", type="error")
+            elif status == "cancelled":
+                self.show_toast(f"Translation cancelled for {filename}.", type="info")
+
+            # Schedule removal
+            QTimer.singleShot(1500, lambda: self._remove_queue_item(item_id))
+
+    def _remove_queue_item(self, item_id: str):
+        """Remove a queue item widget from the UI and safely clean it up."""
+        if not hasattr(self, "_queue_widgets") or item_id not in self._queue_widgets:
             return
-            
-        to_remove = []
-        for item_id, widget in list(self._queue_widgets.items()):
-            if widget.status in ("completed", "failed", "cancelled"):
-                to_remove.append(item_id)
-                
-        for item_id in to_remove:
-            widget = self._queue_widgets.pop(item_id)
-            if hasattr(self, "q_list_layout"):
-                self.q_list_layout.removeWidget(widget)
-            widget.deleteLater()
-            
+        widget = self._queue_widgets.pop(item_id)
+        if hasattr(self, "q_list_layout") and self.q_list_layout:
+            self.q_list_layout.removeWidget(widget)
+        widget.deleteLater()
+        
         # Show empty label if list is empty
         if not self._queue_widgets and hasattr(self, "q_empty_label"):
             self.q_empty_label.show()

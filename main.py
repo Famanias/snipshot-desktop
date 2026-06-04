@@ -49,7 +49,7 @@ def handle_exception(exc_type, exc_value, exc_tb):
 sys.excepthook = handle_exception
 
 
-from config import APP_NAME, APP_VERSION, DEFAULT_SHORTCUT_KEY, DEFAULT_CONTINUOUS_SHORTCUT_KEY
+from config import APP_NAME, APP_VERSION, DEFAULT_SHORTCUT_KEY, DEFAULT_CONTINUOUS_SHORTCUT_KEY, DEFAULT_CONTINUOUS_SNIP_INTERVAL
 from ui import (
     theme,
     get_main_stylesheet,
@@ -363,6 +363,10 @@ class MainWindow(QMainWindow):
         self.translation_queue = []
         self.active_worker = None
         self._queue_snip_counter = 0
+        
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("SnipShot", "SnipShot")
+        self._snip_interval_ms = settings.value("continuous_snip_interval", DEFAULT_CONTINUOUS_SNIP_INTERVAL, type=int)
 
         self._install_snip_shortcut(DEFAULT_SHORTCUT_KEY)
         self._install_continuous_snip_shortcut(DEFAULT_CONTINUOUS_SHORTCUT_KEY)
@@ -391,6 +395,7 @@ class MainWindow(QMainWindow):
         self.dashboard.shortcut_changed.connect(self._install_snip_shortcut)
         self.dashboard.continuous_mode_changed.connect(self._on_continuous_mode_changed)
         self.dashboard.continuous_shortcut_changed.connect(self._install_continuous_snip_shortcut)
+        self.dashboard.snip_interval_changed.connect(self._on_snip_interval_changed)
         self.stack.addWidget(self.dashboard)
     
     def _show_login(self):
@@ -568,6 +573,9 @@ class MainWindow(QMainWindow):
                     self.dashboard.update_queue_item_ui(item["item_id"], "cancelled")
                 self.translation_queue.clear()
 
+    def _on_snip_interval_changed(self, interval: int):
+        self._snip_interval_ms = interval
+
     def toggle_continuous_pause(self):
         self._set_continuous_paused(not self._continuous_paused)
         if not self._continuous_paused:
@@ -659,7 +667,7 @@ class MainWindow(QMainWindow):
             
             # Immediately trigger next capture if not paused and continuous is still enabled
             if self.dashboard.continuous_mode_enabled and not self._continuous_paused:
-                self._start_capture()
+                QTimer.singleShot(self._snip_interval_ms, self._start_capture)
         else:
             self._translation_in_progress = True
             self._update_indicator()

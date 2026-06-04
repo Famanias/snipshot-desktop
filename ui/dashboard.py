@@ -45,6 +45,7 @@ from api import api_client
 from config import (
     TRANSLATION_TARGET_LANG, TRANSLATION_INPAINTER,
     DEFAULT_SHORTCUT_KEY, DEFAULT_CONTINUOUS_SHORTCUT_KEY,
+    DEFAULT_CONTINUOUS_SNIP_INTERVAL,
     DETECTION_SIZE_MIN, DETECTION_SIZE_MAX, DETECTION_SIZE_STEP,
     BOX_THRESHOLD_MIN, BOX_THRESHOLD_MAX,
     INPAINTING_SIZE_MIN, INPAINTING_SIZE_MAX, INPAINTING_SIZE_STEP,
@@ -1256,6 +1257,7 @@ class DashboardWindow(QWidget):
     shortcut_changed = pyqtSignal(int)
     continuous_mode_changed = pyqtSignal(bool)
     continuous_shortcut_changed = pyqtSignal(int)
+    snip_interval_changed = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1270,6 +1272,13 @@ class DashboardWindow(QWidget):
         self.snip_shortcut_key = DEFAULT_SHORTCUT_KEY
         self.continuous_mode_enabled = False
         self.continuous_shortcut_key = DEFAULT_CONTINUOUS_SHORTCUT_KEY
+        
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("SnipShot", "SnipShot")
+        self.continuous_snip_interval = settings.value(
+            "continuous_snip_interval", DEFAULT_CONTINUOUS_SNIP_INTERVAL, type=int
+        )
+        
         self.detection_size = 1536
         self.box_threshold = 0.7
         self.inpainting_size = 2048
@@ -2829,6 +2838,32 @@ class DashboardWindow(QWidget):
         cont_row.addWidget(self.continuous_snip_btn)
         cont_row.addStretch()
         self.content_layout.addLayout(cont_row)
+        self.content_layout.addSpacing(SPACE["md"])
+
+        # Snip Interval (ms) Setting
+        interval_row = QHBoxLayout()
+        interval_row.setSpacing(SPACE["sm"])
+
+        interval_lbl = QLabel("Snip Interval (ms)")
+        interval_lbl.setStyleSheet(self._settings_label_style())
+
+        self.interval_input = QLineEdit()
+        self.interval_input.setStyleSheet(self._settings_input_style())
+        self.interval_input.setFixedWidth(100)
+        self.interval_input.setText(str(self.continuous_snip_interval))
+
+        from PyQt5.QtGui import QIntValidator
+        self.interval_input.setValidator(QIntValidator(100, 10000, self))
+        self.interval_input.editingFinished.connect(self._on_interval_editing_finished)
+
+        interval_row.addWidget(interval_lbl)
+        interval_row.addWidget(self.interval_input)
+        interval_row.addStretch()
+        self.content_layout.addLayout(interval_row)
+
+        self.content_layout.addWidget(self._hint_label(
+            "Time to wait before the next capture starts."
+        ))
         self.content_layout.addSpacing(SPACE["lg"])
 
         # ── Translation Settings ───────────────────────────────────────
@@ -3070,6 +3105,38 @@ class DashboardWindow(QWidget):
             self.single_snip_btn.setStyleSheet(self._continuous_pill_style(not enabled))
             self.continuous_snip_btn.setStyleSheet(self._continuous_pill_style(enabled))
         self.continuous_mode_changed.emit(enabled)
+
+    def _on_interval_editing_finished(self):
+        text = self.interval_input.text().strip()
+        try:
+            val = int(text)
+        except ValueError:
+            val = DEFAULT_CONTINUOUS_SNIP_INTERVAL
+            
+        clamped = False
+        warning_msg = ""
+        if val < 100:
+            val = 100
+            clamped = True
+            warning_msg = "Min interval is 100ms"
+        elif val > 10000:
+            val = 10000
+            clamped = True
+            warning_msg = "Max interval is 10000ms"
+            
+        self.interval_input.setText(str(val))
+        self.continuous_snip_interval = val
+        
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("SnipShot", "SnipShot")
+        settings.setValue("continuous_snip_interval", val)
+        
+        self.snip_interval_changed.emit(val)
+        
+        if clamped:
+            from PyQt5.QtWidgets import QToolTip
+            from PyQt5.QtCore import QPoint
+            QToolTip.showText(self.interval_input.mapToGlobal(QPoint(10, 10)), warning_msg, self.interval_input)
 
     def _on_detection_size_changed(self, value: int):
         if hasattr(self, "detection_size_value"):

@@ -1112,6 +1112,134 @@ class TrashDropZone(QFrame):
             event.ignore()
 
 
+class QueueItemWidget(QFrame):
+    def __init__(self, item_id: str, name: str, lang: str, thumbnail: QPixmap = None, parent=None):
+        super().__init__(parent)
+        self.item_id = item_id
+        self.status = "pending"
+        self.setObjectName("QueueItemWidget")
+        
+        self._setup_ui(name, lang, thumbnail)
+        self._apply_style()
+        theme.theme_changed.connect(self._apply_style)
+
+    def _setup_ui(self, name: str, lang: str, thumbnail: QPixmap):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(SPACE["sm"], SPACE["sm"], SPACE["sm"], SPACE["sm"])
+        layout.setSpacing(SPACE["sm"])
+        
+        # Thumbnail
+        self.thumb_label = QLabel()
+        self.thumb_label.setFixedSize(36, 36)
+        self.thumb_label.setAlignment(Qt.AlignCenter)
+        if thumbnail:
+            scaled = thumbnail.scaled(36, 36, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.thumb_label.setPixmap(scaled)
+        else:
+            self.thumb_label.setText("\U0001F5BC") # fallback emoji
+            self.thumb_label.setStyleSheet("font-size: 18px;")
+            
+        layout.addWidget(self.thumb_label)
+        
+        # Details layout
+        details = QVBoxLayout()
+        details.setSpacing(2)
+        details.setContentsMargins(0, 0, 0, 0)
+        
+        # Name and Lang
+        name_lang = QHBoxLayout()
+        name_lang.setSpacing(4)
+        
+        self.name_lbl = QLabel(name)
+        self.name_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
+        
+        self.lang_badge = QLabel(lang)
+        
+        name_lang.addWidget(self.name_lbl)
+        name_lang.addStretch()
+        name_lang.addWidget(self.lang_badge)
+        details.addLayout(name_lang)
+        
+        # Progress Bar
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFixedHeight(4)
+        self.progress.setTextVisible(False)
+        details.addWidget(self.progress)
+        
+        # Status
+        self.status_lbl = QLabel("Pending...")
+        self.status_lbl.setStyleSheet("font-size: 11px;")
+        details.addWidget(self.status_lbl)
+        
+        layout.addLayout(details)
+
+    def _apply_style(self):
+        c = theme.c
+        self.setStyleSheet(f"""
+            QFrame#QueueItemWidget {{
+                background-color: {c['surface']};
+                border: 1px solid {c['border']};
+                border-radius: 8px;
+            }}
+        """)
+        self.name_lbl.setStyleSheet(f"font-weight: 600; font-size: 12px; color: {c['text']}; background: transparent;")
+        self.lang_badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: {c['primary_light']};
+                color: {c['primary_dark'] if theme.is_dark else c['primary']};
+                font-size: 10px;
+                font-weight: 700;
+                padding: 1px 4px;
+                border-radius: 3px;
+            }}
+        """)
+        self.progress.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {c['border']};
+                border: none;
+                border-radius: 2px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {c['primary']};
+                border-radius: 2px;
+            }}
+        """)
+        self.status_lbl.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']}; background: transparent;")
+
+    def update_status(self, status: str, progress: int = 0, error_msg: str = ""):
+        c = theme.c
+        self.status = status
+        self.progress.setValue(progress)
+        
+        if status == "pending":
+            self.status_lbl.setText("Pending...")
+            self.status_lbl.setStyleSheet(f"font-size: 11px; color: {c['text_secondary']}; background: transparent;")
+            self.progress.show()
+        elif status == "translating":
+            self.status_lbl.setText(f"Translating ({progress}%)")
+            self.status_lbl.setStyleSheet(f"font-size: 11px; color: {c['primary']}; background: transparent;")
+            self.progress.show()
+        elif status == "saving":
+            self.status_lbl.setText("Saving to account...")
+            self.status_lbl.setStyleSheet(f"font-size: 11px; color: {c['primary']}; background: transparent;")
+            self.progress.setValue(90)
+            self.progress.show()
+        elif status == "completed":
+            self.status_lbl.setText("Completed")
+            self.status_lbl.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {c['success']}; background: transparent;")
+            self.progress.hide()
+        elif status == "failed":
+            self.status_lbl.setText(f"Failed: {error_msg}")
+            self.status_lbl.setStyleSheet(f"font-size: 11px; color: {c['error']}; background: transparent;")
+            self.progress.hide()
+        elif status == "cancelled":
+            self.status_lbl.setText("Cancelled")
+            self.status_lbl.setStyleSheet(f"font-size: 11px; color: {c['text_tertiary']}; background: transparent;")
+            self.progress.hide()
+
+
 class DashboardWindow(QWidget):
     """
     Main dashboard with folder and image management.
@@ -1269,6 +1397,17 @@ class DashboardWindow(QWidget):
             }}
         """)
         self.theme_btn.clicked.connect(self._on_theme_toggle_clicked)
+        
+        # Queue toggle button in top bar
+        self.queue_toggle_btn = QPushButton()
+        self.queue_toggle_btn.setFixedSize(65, 28)
+        self.queue_toggle_btn.setIcon(load_icon("translate_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.queue_toggle_btn.setIconSize(QSize(20, 20))
+        self.queue_toggle_btn.setCursor(Qt.PointingHandCursor)
+        self.queue_toggle_btn.setToolTip("Translation Queue")
+        self.queue_toggle_btn.clicked.connect(self._toggle_queue_drawer)
+        
+        top_layout.addWidget(self.queue_toggle_btn, alignment=Qt.AlignVCenter)
         top_layout.addWidget(self.theme_btn, alignment=Qt.AlignVCenter)
 
         outer_layout.addWidget(self.top_bar)
@@ -1439,7 +1578,72 @@ class DashboardWindow(QWidget):
         )
         self.content_layout.addWidget(self.loading_label)
 
+        # ========== Queue Sidebar Drawer (Right) ==========
+        self.queue_sidebar = QFrame()
+        self.queue_sidebar.setObjectName("queue_sidebar")
+        self.queue_sidebar.setFixedWidth(280)
+        self.queue_sidebar.setHidden(True)
+
+        queue_layout = QVBoxLayout(self.queue_sidebar)
+        queue_layout.setContentsMargins(SPACE["md"], SPACE["md"], SPACE["md"], SPACE["md"])
+        queue_layout.setSpacing(SPACE["sm"])
+
+        # Header of Queue Sidebar
+        q_header = QHBoxLayout()
+        self.q_title = QLabel("Translation Queue")
+        self.q_title.setStyleSheet(f"font-size: {FONT['heading']['size']}px; font-weight: {FONT['heading']['weight']}; color: {c['text']};")
+        
+        self.q_close_btn = QPushButton()
+        self.q_close_btn.setFixedSize(24, 24)
+        self.q_close_btn.setCursor(Qt.PointingHandCursor)
+        self.q_close_btn.setIcon(load_icon("close_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.q_close_btn.setIconSize(QSize(16, 16))
+        self.q_close_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                border: none;
+                border-radius: 12px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.1);
+            }
+        """)
+        self.q_close_btn.clicked.connect(lambda: self.queue_sidebar.setHidden(True))
+        
+        q_header.addWidget(self.q_title)
+        q_header.addStretch()
+        q_header.addWidget(self.q_close_btn)
+        queue_layout.addLayout(q_header)
+
+        # Scroll area for queue items
+        self.q_scroll = QScrollArea()
+        self.q_scroll.setWidgetResizable(True)
+        self.q_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        
+        self.q_list_widget = QWidget()
+        self.q_list_widget.setObjectName("q_list_widget")
+        self.q_list_widget.setStyleSheet("background: transparent;")
+        self.q_list_layout = QVBoxLayout(self.q_list_widget)
+        self.q_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.q_list_layout.setSpacing(SPACE["sm"])
+        self.q_list_layout.setAlignment(Qt.AlignTop)
+        
+        self.q_scroll.setWidget(self.q_list_widget)
+        queue_layout.addWidget(self.q_scroll)
+
+        # Empty Queue placeholder
+        self.q_empty_label = QLabel("No active translations.\nSnip to begin!")
+        self.q_empty_label.setAlignment(Qt.AlignCenter)
+        self.q_empty_label.setStyleSheet(f"color: {c['text_secondary']}; font-size: {FONT['caption']['size']}px; padding: {SPACE['lg']}px;")
+        queue_layout.addWidget(self.q_empty_label)
+
+        # Clear Completed Button
+        self.q_clear_btn = StyledButton("Clear Completed", variant="secondary")
+        self.q_clear_btn.clicked.connect(self._clear_completed_queue)
+        queue_layout.addWidget(self.q_clear_btn)
+
         split_layout.addWidget(self.content_frame)
+        split_layout.addWidget(self.queue_sidebar)
         outer_layout.addWidget(split_widget)
 
         # Keep dummy controls for compatibility
@@ -1555,6 +1759,31 @@ class DashboardWindow(QWidget):
         """)
         search_pixmap = load_icon("search_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg").pixmap(16, 16)
         self.search_icon.setPixmap(search_pixmap)
+
+        # Queue Drawer styles
+        self.queue_sidebar.setStyleSheet(f"""
+            QFrame#queue_sidebar {{
+                background-color: {c['sidebar']};
+                border-left: 1px solid {c['border']};
+            }}
+        """)
+        self.q_title.setStyleSheet(f"""
+            QLabel {{
+                font-size: {FONT['heading']['size']}px;
+                font-weight: {FONT['heading']['weight']};
+                color: {c['text']};
+                background: transparent;
+            }}
+        """)
+        self.q_empty_label.setStyleSheet(f"""
+            QLabel {{
+                color: {c['text_secondary']};
+                font-size: {FONT['caption']['size']}px;
+                padding: {SPACE['lg']}px;
+                background: transparent;
+            }}
+        """)
+        self._update_queue_badge()
 
     def _on_theme_toggle_clicked(self):
         theme.toggle()
@@ -3215,6 +3444,106 @@ class DashboardWindow(QWidget):
             new_x = self.width() - trash_w - margin_right
             new_y = self.height() - trash_h - margin_bottom
             self.trash_drop_zone.move(new_x, new_y)
+
+    def _toggle_queue_drawer(self):
+        """Toggle queue sidebar visibility."""
+        if hasattr(self, "queue_sidebar"):
+            self.queue_sidebar.setHidden(not self.queue_sidebar.isHidden())
+
+    def add_queue_item_ui(self, item_id: str, name: str, lang: str, thumbnail: QPixmap = None):
+        """Create and add a new QueueItemWidget to the queue sidebar drawer."""
+        if not hasattr(self, "_queue_widgets"):
+            self._queue_widgets = {}
+
+        # Hide empty label
+        if hasattr(self, "q_empty_label"):
+            self.q_empty_label.hide()
+
+        # Instantiate item widget
+        widget = QueueItemWidget(item_id, name, lang, thumbnail, self)
+        self._queue_widgets[item_id] = widget
+        
+        # Add to list layout
+        if hasattr(self, "q_list_layout"):
+            self.q_list_layout.addWidget(widget)
+            
+        # Update badge count
+        self._update_queue_badge()
+
+    def update_queue_item_ui(self, item_id: str, status: str, progress: int = 0, error_msg: str = ""):
+        """Update the status of an existing item in the queue drawer."""
+        if not hasattr(self, "_queue_widgets") or item_id not in self._queue_widgets:
+            return
+            
+        widget = self._queue_widgets[item_id]
+        widget.update_status(status, progress, error_msg)
+        
+        # Update badge count
+        self._update_queue_badge()
+
+    def _clear_completed_queue(self):
+        """Remove completed, failed, or cancelled tasks from the queue list view."""
+        if not hasattr(self, "_queue_widgets"):
+            return
+            
+        to_remove = []
+        for item_id, widget in list(self._queue_widgets.items()):
+            if widget.status in ("completed", "failed", "cancelled"):
+                to_remove.append(item_id)
+                
+        for item_id in to_remove:
+            widget = self._queue_widgets.pop(item_id)
+            if hasattr(self, "q_list_layout"):
+                self.q_list_layout.removeWidget(widget)
+            widget.deleteLater()
+            
+        # Show empty label if list is empty
+        if not self._queue_widgets and hasattr(self, "q_empty_label"):
+            self.q_empty_label.show()
+            
+        self._update_queue_badge()
+
+    def _update_queue_badge(self):
+        """Update the toggle button badge count with active/pending tasks."""
+        if not hasattr(self, "_queue_widgets") or not hasattr(self, "queue_toggle_btn"):
+            return
+            
+        active_count = 0
+        for widget in self._queue_widgets.values():
+            if widget.status in ("pending", "translating", "saving"):
+                active_count += 1
+                
+        if active_count > 0:
+            self.queue_toggle_btn.setText(f" ({active_count})")
+            c = theme.c
+            self.queue_toggle_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {c['primary_subtle']};
+                    color: {c['primary_dark'] if theme.is_dark else c['primary']};
+                    border: 1px solid {c['primary']};
+                    font-size: 13px;
+                    font-weight: 700;
+                    border-radius: 14px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['hover']};
+                }}
+            """)
+        else:
+            self.queue_toggle_btn.setText("")
+            c = theme.c
+            self.queue_toggle_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    border: none;
+                    font-size: 14px;
+                    border-radius: 14px;
+                    color: {c['text_secondary']};
+                }}
+                QPushButton:hover {{
+                    background-color: {c['hover']};
+                }}
+            """)
 
     def _on_logout(self):
         api_client.logout()

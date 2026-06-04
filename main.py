@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QSystemTrayIcon, QMenu, QAction,
     QWidget, QHBoxLayout, QFrame, QLabel, QPushButton
 )
-from PyQt5.QtCore import Qt, QTimer, QPoint
+from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal, QThread, QBuffer, QIODevice
 from PyQt5.QtGui import QIcon, QPixmap
 
 # Setup crash logging
@@ -250,6 +250,79 @@ class ContinuousModeHUD(QWidget):
             event.accept()
 
 
+class QueuedTranslationWorker(QThread):
+    """
+    Background worker that handles translation AND saving sequentially.
+    """
+    progress = pyqtSignal(str, int)  # status text, progress percentage
+    finished = pyqtSignal(dict)      # final saved image database record
+    error = pyqtSignal(str)          # error message
+
+    def __init__(
+        self,
+        image_bytes: bytes,
+        filename: str,
+        folder_id: int = None,
+        target_language: str = "ENG",
+        translation_config: dict = None,
+    ):
+        super().__init__()
+        self.image_bytes = image_bytes
+        self.filename = filename
+        self.folder_id = folder_id
+        self.target_language = target_language
+        self.translation_config = translation_config
+
+    def run(self):
+        try:
+            import copy
+            from config import DEFAULT_TRANSLATION_CONFIG
+            
+            # Step 1: Translate
+            self.progress.emit("translating", 10)
+            
+            config = copy.deepcopy(
+                self.translation_config if self.translation_config is not None
+                else DEFAULT_TRANSLATION_CONFIG
+            )
+            config.setdefault("translator", {})
+            config["translator"]["target_lang"] = self.target_language
+            
+            self.progress.emit("translating", 30)
+            res = api_client.translate_image(self.image_bytes, config=config)
+            
+            if not res.get("success"):
+                self.error.emit(res.get("error", "Translation failed"))
+                return
+                
+            translated_bytes = res["data"].get("image_bytes")
+            if not translated_bytes:
+                self.error.emit("Translated image bytes are empty")
+                return
+
+            self.progress.emit("translating", 70)
+            
+            # Step 2: Save to Account
+            self.progress.emit("saving", 85)
+            save_res = api_client.save_image_from_bytes(
+                translated_bytes,
+                self.filename,
+                self.folder_id,
+                source_language="JPN",
+                target_language=self.target_language,
+            )
+            
+            if not save_res.get("success"):
+                self.error.emit(save_res.get("error", "Save failed"))
+                return
+                
+            self.progress.emit("completed", 100)
+            self.finished.emit(save_res["data"])
+            
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class MainWindow(QMainWindow):
     """
     Main application window.
@@ -287,6 +360,9 @@ class MainWindow(QMainWindow):
         self._continuous_paused = False
         self._translation_in_progress = False
         self.continuous_hud = None
+        self.translation_queue = []
+        self.active_worker = None
+        self._queue_snip_counter = 0
 
         self._install_snip_shortcut(DEFAULT_SHORTCUT_KEY)
         self._install_continuous_snip_shortcut(DEFAULT_CONTINUOUS_SHORTCUT_KEY)
@@ -486,6 +562,11 @@ class MainWindow(QMainWindow):
         self._update_indicator()
         if enabled:
             self._start_capture()
+        else:
+            if hasattr(self, "translation_queue") and self.translation_queue:
+                for item in list(self.translation_queue):
+                    self.dashboard.update_queue_item_ui(item["item_id"], "cancelled")
+                self.translation_queue.clear()
 
     def toggle_continuous_pause(self):
         self._set_continuous_paused(not self._continuous_paused)
@@ -516,10 +597,10 @@ class MainWindow(QMainWindow):
             
             if self._continuous_paused:
                 self.continuous_hud.set_state("paused")
-            elif self._translation_in_progress:
-                self.continuous_hud.set_state("translating")
             elif self.capture_widget is not None and self.capture_widget.isVisible():
                 self.continuous_hud.set_state("capturing")
+            elif self._translation_in_progress:
+                self.continuous_hud.set_state("translating")
             else:
                 self.continuous_hud.set_state("ready")
         else:
@@ -537,10 +618,12 @@ class MainWindow(QMainWindow):
         if continuous is not None:
             self.dashboard._set_continuous_mode(continuous)
 
-        # Ignore if a capture or translation is already in progress
+        # Ignore if a capture is already in progress
         if self.capture_widget is not None and self.capture_widget.isVisible():
             return
-        if self._translation_in_progress:
+            
+        # Ignore if single-snip translation is in progress (blocks further captures)
+        if not self.dashboard.continuous_mode_enabled and self._translation_in_progress:
             return
 
         if self.dashboard.continuous_mode_enabled:
@@ -570,35 +653,39 @@ class MainWindow(QMainWindow):
         if not api_client.is_authenticated:
             return
 
-        self._translation_in_progress = True
-        self._update_indicator()
-        
-        # Open translation dialog
-        self.translation_window = TranslationWindow(
-            pixmap,
-            self,
-            target_language=self.dashboard.get_target_language(),
-            translation_config=self.dashboard.get_translation_config(),
-        )
-        self.translation_window.saved.connect(self.dashboard.add_saved_image)
-        
-        try:
-            self.translation_window.exec_()
-        finally:
-            self._translation_in_progress = False
+        if self.dashboard.continuous_mode_enabled:
+            # Bypass modal and add directly to queue
+            self._add_to_queue(pixmap)
             
-            # Check success of translation
-            success = getattr(self.translation_window, "translation_success", False)
-            
-            # If it failed/errored/cancelled, auto-pause continuous mode to prevent loop
-            if not success and self.dashboard.continuous_mode_enabled:
-                self._continuous_paused = True
-                
+            # Immediately trigger next capture if not paused and continuous is still enabled
+            if self.dashboard.continuous_mode_enabled and not self._continuous_paused:
+                self._start_capture()
+        else:
+            self._translation_in_progress = True
             self._update_indicator()
             
-            # Auto-reactivate ONLY if continuous mode is enabled, succeeded, and not paused
-            if self.dashboard.continuous_mode_enabled and success and not self._continuous_paused:
-                self._start_capture()
+            # Open translation dialog
+            self.translation_window = TranslationWindow(
+                pixmap,
+                self,
+                target_language=self.dashboard.get_target_language(),
+                translation_config=self.dashboard.get_translation_config(),
+            )
+            self.translation_window.saved.connect(self.dashboard.add_saved_image)
+            
+            try:
+                self.translation_window.exec_()
+            finally:
+                self._translation_in_progress = False
+                
+                # Check success of translation
+                success = getattr(self.translation_window, "translation_success", False)
+                
+                # If it failed/errored/cancelled, auto-pause continuous mode to prevent loop
+                if not success and self.dashboard.continuous_mode_enabled:
+                    self._continuous_paused = True
+                    
+                self._update_indicator()
 
     def _on_capture_cancelled(self):
         """Handle cancelled capture"""
@@ -625,6 +712,93 @@ class MainWindow(QMainWindow):
         )
         self.translation_window.saved.connect(self.dashboard.add_saved_image)
         self.translation_window.exec_()
+
+    def _add_to_queue(self, pixmap: QPixmap):
+        self._queue_snip_counter += 1
+        item_id = f"snip_{self._queue_snip_counter}"
+        filename = f"Continuous Snip #{self._queue_snip_counter}.png"
+        
+        folder_id = self.dashboard.current_folder_id
+        target_language = self.dashboard.get_target_language()
+        
+        buffer = QBuffer()
+        buffer.open(QIODevice.WriteOnly)
+        pixmap.save(buffer, "PNG")
+        image_bytes = buffer.data().data()
+        
+        item = {
+            "item_id": item_id,
+            "image_bytes": image_bytes,
+            "filename": filename,
+            "folder_id": folder_id,
+            "target_language": target_language,
+            "thumbnail": pixmap
+        }
+        
+        self.translation_queue.append(item)
+        self.dashboard.add_queue_item_ui(item_id, filename, target_language, pixmap)
+        
+        if hasattr(self.dashboard, "queue_sidebar") and self.dashboard.queue_sidebar.isHidden():
+            self.dashboard.queue_sidebar.show()
+            
+        self._process_next_queue_item()
+
+    def _process_next_queue_item(self):
+        if self.active_worker is not None or not self.translation_queue:
+            return
+            
+        item = self.translation_queue.pop(0)
+        
+        self.active_worker = QueuedTranslationWorker(
+            image_bytes=item["image_bytes"],
+            filename=item["filename"],
+            folder_id=item["folder_id"],
+            target_language=item["target_language"],
+            translation_config=self.dashboard.get_translation_config()
+        )
+        
+        self.active_worker_item_id = item["item_id"]
+        
+        self.active_worker.progress.connect(self._on_queue_worker_progress)
+        self.active_worker.finished.connect(self._on_queue_worker_finished)
+        self.active_worker.error.connect(self._on_queue_worker_error)
+        
+        self._translation_in_progress = True
+        self._update_indicator()
+        
+        self.active_worker.start()
+
+    def _on_queue_worker_progress(self, status: str, progress: int):
+        item_id = getattr(self, "active_worker_item_id", None)
+        if item_id:
+            self.dashboard.update_queue_item_ui(item_id, status, progress)
+
+    def _on_queue_worker_finished(self, saved_image_data: dict):
+        item_id = getattr(self, "active_worker_item_id", None)
+        if item_id:
+            self.dashboard.update_queue_item_ui(item_id, "completed", 100)
+            
+        self.dashboard.add_saved_image(saved_image_data)
+        
+        self._clear_active_worker()
+        self._process_next_queue_item()
+
+    def _on_queue_worker_error(self, error_msg: str):
+        item_id = getattr(self, "active_worker_item_id", None)
+        if item_id:
+            self.dashboard.update_queue_item_ui(item_id, "failed", error_msg=error_msg)
+            
+        self._clear_active_worker()
+        self._process_next_queue_item()
+
+    def _clear_active_worker(self):
+        if self.active_worker:
+            self.active_worker.quit()
+            self.active_worker.wait()
+            self.active_worker = None
+        self.active_worker_item_id = None
+        self._translation_in_progress = False
+        self._update_indicator()
 
 
 def main():

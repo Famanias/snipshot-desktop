@@ -19,7 +19,8 @@
 # ─────────────────────────────────────────────────────────────────────
 
 from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QIcon
+import os
 
 from .theme import theme
 
@@ -458,10 +459,15 @@ def folder_card():
         FolderCard {{
             background-color: {c['surface']};
             border: 1px solid {c['border']};
-            border-radius: {SPACE['sm']}px;
+            border-radius: 12px;
         }}
         FolderCard:hover {{
+            background-color: {c['hover']};
             border-color: {c['primary']};
+        }}
+        FolderCard[dragOver="true"] {{
+            background-color: {c['primary_light']};
+            border: 2px dashed {c['primary']};
         }}
     """
 
@@ -472,9 +478,10 @@ def image_card():
         ImageCard {{
             background-color: {c['surface']};
             border: 1px solid {c['border']};
-            border-radius: {SPACE['sm']}px;
+            border-radius: 12px;
         }}
         ImageCard:hover {{
+            background-color: {c['hover']};
             border-color: {c['primary']};
         }}
     """
@@ -696,6 +703,43 @@ def password_strength_bar(level: int):
             border-radius: 2px;
         }}
     """
+
+
+# ── Icon helper ────────────────────────────────────────────────────────
+
+def load_icon(icon_name: str) -> QIcon:
+    """
+    Load an SVG icon from the ui/icons folder.
+    Automatically adjusts icon color based on current theme:
+    - Dark mode: uses light/grey icons (E3E3E3)
+    - Light mode: uses dark icons (212121)
+    
+    Args:
+        icon_name: The icon filename (can have E3E3E3 or 212121, will be normalized)
+    
+    Returns:
+        A QIcon object, or empty QIcon if file not found
+    """
+    from .theme import theme
+    from utils.helpers import resource_path
+    
+    # Normalize the icon name based on current theme
+    if theme.is_dark:
+        # Dark mode: use light-colored icons (E3E3E3)
+        if "212121" in icon_name:
+            icon_name = icon_name.replace("212121", "E3E3E3")
+    else:
+        # Light mode: use dark-colored icons (212121)
+        if "E3E3E3" in icon_name:
+            icon_name = icon_name.replace("E3E3E3", "212121")
+    
+    icon_path = resource_path(os.path.join("ui", "icons", icon_name))
+    
+    if os.path.exists(icon_path):
+        return QIcon(icon_path)
+    else:
+        print(f"Warning: Icon not found at {icon_path}")
+        return QIcon()
 
 
 CAPTURE_STYLESHEET = """

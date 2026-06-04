@@ -12,7 +12,7 @@ import time
 import httpx
 from typing import Optional, Dict, Any
 
-from config import TRANSLATOR_URL, DEFAULT_TRANSLATION_CONFIG
+from config import LOCAL_TRANSLATOR_URL, DEFAULT_TRANSLATION_CONFIG
 from . import database as db
 from . import storage
 
@@ -20,11 +20,11 @@ from . import storage
 class LocalAPIClient:
     """API client that stores everything locally (SQLite + filesystem)."""
 
-    def __init__(self):
+    def __init__(self, translator_url: Optional[str] = None):
         self.access_token = "local"
         self.refresh_token = None
         self.user = {"email": "Local User", "id": "local"}
-        self.translator_url = TRANSLATOR_URL
+        self.translator_url = translator_url or LOCAL_TRANSLATOR_URL
         db.init_db()
         storage.init_storage()
 
@@ -346,6 +346,12 @@ class LocalAPIClient:
             return {"success": False, "error": str(e)}
         finally:
             conn.close()
+
+    def move_image_to_folder(
+        self, image_id: int, filename: str = None, folder_id: int = None
+    ) -> Dict[str, Any]:
+        """Update image folder and/or filename. Alias for update_image."""
+        return self.update_image(image_id, filename=filename, folder_id=folder_id)
 
     def delete_image(self, image_id: int) -> Dict[str, Any]:
         conn = db.get_connection()

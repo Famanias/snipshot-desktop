@@ -27,3 +27,4 @@ cryptography>=41.0.0
 
 # For packaging (optional)
 pyinstaller>=6.0.0
+platformdirs>=4.0.0

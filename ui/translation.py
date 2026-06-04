@@ -111,7 +111,7 @@ class TranslationWindow(QDialog):
     Displays progress, result, and save options.
     """
 
-    saved = pyqtSignal()
+    saved = pyqtSignal(dict)
 
     def __init__(
         self,
@@ -130,6 +130,7 @@ class TranslationWindow(QDialog):
         self.translation_config = translation_config
         self.translated_bytes = None
         self.folders = []
+        self.translation_success = False
 
         self._setup_ui()
         self._load_folders()
@@ -272,7 +273,8 @@ class TranslationWindow(QDialog):
         try:
             result = api_client.get_folders()
             if result["success"]:
-                self.folders = result["data"].get("folders", [])
+                data = result["data"]
+                self.folders = data if isinstance(data, list) else data.get("folders", [])
                 for folder in self.folders:
                     self.folder_selector.addItem(
                         f"\U0001F4C1 {folder['name']}", folder["id"]
@@ -296,6 +298,7 @@ class TranslationWindow(QDialog):
 
     def _on_translation_complete(self, data: dict):
         """Handle translation completion."""
+        self.translation_success = True
         self.translated_bytes = data.get("image_bytes")
         c = theme.c
 
@@ -387,7 +390,7 @@ class TranslationWindow(QDialog):
         )
 
         self.save_btn.setText("Saved!")
-        self.saved.emit()
+        self.saved.emit(data)
 
         from PyQt5.QtCore import QTimer
 

@@ -6,9 +6,12 @@
 # - FolderSelector(QWidget)   — custom themed folder dropdown
 # ─────────────────────────────────────────────────────────────────────
 
+import time
+
 from PyQt5.QtWidgets import (
     QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel,
-    QFrame, QSizePolicy, QGraphicsOpacityEffect,
+    QFrame, QSizePolicy, QGraphicsOpacityEffect, QListWidget,
+    QListWidgetItem, QApplication,
 )
 from PyQt5.QtCore import Qt, QTimer, QSize, QRectF, pyqtSignal, QEvent, QPoint
 from PyQt5.QtGui import QPainter, QPen, QColor, QFont
@@ -58,7 +61,7 @@ class StyledButton(QPushButton):
                     color: white;
                     border: none;
                     border-radius: {SPACE['sm']}px;
-                    padding: {SPACE['md']}px {SPACE['lg']}px;
+                    padding: {SPACE['sm']}px {SPACE['lg']}px;
                     font-size: {FONT['body']['size']}px;
                     font-weight: 600;
                     min-height: 44px;
@@ -81,7 +84,7 @@ class StyledButton(QPushButton):
                     color: {c['text']};
                     border: 1px solid {c['border']};
                     border-radius: {SPACE['sm']}px;
-                    padding: {SPACE['md']}px {SPACE['lg']}px;
+                    padding: {SPACE['sm']}px {SPACE['lg']}px;
                     font-size: {FONT['body']['size']}px;
                     font-weight: 500;
                     min-height: 44px;
@@ -127,7 +130,7 @@ class StyledButton(QPushButton):
                     color: white;
                     border: none;
                     border-radius: {SPACE['sm']}px;
-                    padding: {SPACE['md']}px {SPACE['lg']}px;
+                    padding: {SPACE['sm']}px {SPACE['lg']}px;
                     font-size: {FONT['body']['size']}px;
                     font-weight: 600;
                     min-height: 44px;
@@ -203,42 +206,94 @@ class SnipShotSpinner(QWidget):
 # FolderSelector
 # ═════════════════════════════════════════════════════════════════════════
 
-class _FolderDropdownItem(QPushButton):
-    """Single item inside the FolderSelector dropdown."""
+# Dropdown configuration constants for FolderSelector
+ITEM_HEIGHT = 40             # Height of each list item in logical pixels
+MAX_VISIBLE_ITEMS = 5        # Max items visible before scrolling is enabled
+MAX_HEIGHT = ITEM_HEIGHT * MAX_VISIBLE_ITEMS  # Capped dropdown height (200px)
+REOPEN_DEBOUNCE_S = 0.15     # Debounce time (150ms) to avoid click-to-close bounce
+VERTICAL_PADDING = 8         # Total top/bottom padding (SPACE['xs'] * 2)
+BORDER_HEIGHT = 2            # Total top/bottom border thickness (1px each)
+PADDING_BORDER_OFFSET = VERTICAL_PADDING + BORDER_HEIGHT # 10px offset for layout height
 
-    item_clicked = pyqtSignal(object, str)  # data, display_text
 
-    def __init__(self, display_text: str, data, parent=None):
-        super().__init__(display_text, parent)
-        self._data = data
-        self._display = display_text
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(40)
+class FolderDropdownList(QListWidget):
+    """
+    Styled dropdown list that overlays using Qt.Popup.
+    Handles keyboard selection and avoids boundary clipping.
+    """
+
+    closed = pyqtSignal()
+    item_chosen = pyqtSignal(object, str)  # emits (data, text)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Ensure the list behaves as a popup window by adding the Qt.Popup flag to existing flags
+        self.setWindowFlags(self.windowFlags() | Qt.Popup)
+        self.setObjectName("FolderDropdownList")
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.itemClicked.connect(self._on_item_activated)
+        self.itemActivated.connect(self._on_item_activated)
+        self._is_closing = False
         self._apply_style()
-        self.clicked.connect(lambda: self.item_clicked.emit(self._data, self._display))
 
     def _apply_style(self):
         c = theme.c
         self.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
+            QListWidget#FolderDropdownList {{
+                background-color: {c['surface']};
+                border: 1px solid {c['border']};
+                border-radius: {SPACE['sm']}px;
+                outline: none;
+                padding: {SPACE['xs']}px;
+            }}
+            QListWidget#FolderDropdownList::item {{
                 color: {c['text']};
                 border: none;
                 border-radius: {SPACE['xs']}px;
-                padding: {SPACE['sm']}px {SPACE['md']}px;
+                padding: 0px {SPACE['md']}px;
                 font-size: {FONT['body']['size']}px;
-                text-align: left;
             }}
-            QPushButton:hover {{
+            QListWidget#FolderDropdownList::item:hover {{
                 background-color: {c['hover']};
             }}
+            QListWidget#FolderDropdownList::item:selected {{
+                background-color: {c['primary_light']};
+                color: {c['text']};
+            }}
         """)
+
+    def _on_item_activated(self, item):
+        if not item:
+            return
+        data = item.data(Qt.UserRole)
+        text = item.text()
+        self.item_chosen.emit(data, text)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            current = self.currentItem()
+            if current:
+                self._on_item_activated(current)
+            event.accept()
+        elif event.key() == Qt.Key_Escape:
+            self.close()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def hideEvent(self, event):
+        if not self._is_closing:
+            self._is_closing = True
+            self.closed.emit()
+        super().hideEvent(event)
 
 
 class FolderSelector(QWidget):
     """
     Custom themed folder dropdown to replace QComboBox.
-    Shows a styled button; on click opens a QFrame dropdown.
+    Shows a styled button; on click opens a FolderDropdownList.
     """
 
     selection_changed = pyqtSignal(object)  # emits the data value
@@ -248,6 +303,7 @@ class FolderSelector(QWidget):
         self._items: list[tuple[str, object]] = []
         self._current_data = None
         self._current_text = "Select folder..."
+        self._last_close_time = 0.0
 
         self._btn = QPushButton(self._current_text)
         self._btn.setCursor(Qt.PointingHandCursor)
@@ -259,7 +315,7 @@ class FolderSelector(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self._btn)
 
-        self._dropdown: QFrame | None = None
+        self._dropdown: FolderDropdownList | None = None
         self._apply_style()
         theme.theme_changed.connect(self._apply_style)
 
@@ -297,6 +353,8 @@ class FolderSelector(QWidget):
         self._btn.setText(self._current_text)
 
     def _toggle_dropdown(self):
+        if time.time() - self._last_close_time < REOPEN_DEBOUNCE_S:
+            return
         if self._dropdown and self._dropdown.isVisible():
             self._close_dropdown()
             return
@@ -305,42 +363,58 @@ class FolderSelector(QWidget):
     def _open_dropdown(self):
         self._close_dropdown()
 
-        c = theme.c
-        self._dropdown = QFrame(self.window())
-        self._dropdown.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['surface']};
-                border: 1px solid {c['border']};
-                border-radius: {SPACE['sm']}px;
-            }}
-        """)
+        # Create a popup list without a parent so it receives mouse events.
+        self._dropdown = FolderDropdownList()
+        self._dropdown.item_chosen.connect(self._on_item_selected)
+        self._dropdown.closed.connect(self._close_dropdown)
 
-        dl = QVBoxLayout(self._dropdown)
-        dl.setContentsMargins(SPACE['xs'], SPACE['xs'], SPACE['xs'], SPACE['xs'])
-        dl.setSpacing(0)
-
-        for text, data in self._items:
-            item = _FolderDropdownItem(text, data, self._dropdown)
-            item.item_clicked.connect(self._on_item_selected)
-            dl.addWidget(item)
-
-        self._dropdown.adjustSize()
-
-        # Position below the button
-        global_pos = self._btn.mapToGlobal(QPoint(0, self._btn.height()))
-        parent_pos = self.window().mapFromGlobal(global_pos)
-        self._dropdown.move(parent_pos)
-        self._dropdown.setFixedWidth(self._btn.width())
+        # Populate items
+        # Ensure the popup appears above other widgets
         self._dropdown.raise_()
+        for text, data in self._items:
+            item = QListWidgetItem(text, self._dropdown)
+            item.setData(Qt.UserRole, data)
+            item.setSizeHint(QSize(0, ITEM_HEIGHT))
+            item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self._dropdown.addItem(item)
+
+        # Calculate height dynamically with capping & scaling safety
+        num_items = len(self._items)
+        total_height = num_items * ITEM_HEIGHT + PADDING_BORDER_OFFSET
+        max_height = MAX_HEIGHT + PADDING_BORDER_OFFSET
+        dropdown_height = min(total_height, max_height)
+
+        self._dropdown.setFixedWidth(self._btn.width())
+        self._dropdown.setFixedHeight(dropdown_height)
+
+        # Viewport protection (flip upward if dropdown would overflow the screen bottom)
+        global_pos = self._btn.mapToGlobal(QPoint(0, self._btn.height()))
+        screen = QApplication.desktop().screenGeometry(global_pos)
+
+        if global_pos.y() + dropdown_height > screen.bottom():
+            # Open above the button
+            global_pos = self._btn.mapToGlobal(QPoint(0, -dropdown_height))
+
+        self._dropdown.move(global_pos)
         self._dropdown.show()
 
-        # Install event filter to close on outside click
-        self.window().installEventFilter(self)
+        # Pre-select the item matches self._current_data using Row indices
+        for i in range(self._dropdown.count()):
+            item = self._dropdown.item(i)
+            if item.data(Qt.UserRole) == self._current_data:
+                self._dropdown.setCurrentRow(i)
+                break
+
+        self._dropdown.setFocus()
 
     def _close_dropdown(self):
         if self._dropdown:
-            self.window().removeEventFilter(self)
-            self._dropdown.hide()
+            self._last_close_time = time.time()
+            try:
+                self._dropdown.closed.disconnect(self._close_dropdown)
+            except TypeError:
+                pass
+            self._dropdown.close()
             self._dropdown.deleteLater()
             self._dropdown = None
 
@@ -350,15 +424,3 @@ class FolderSelector(QWidget):
         self._btn.setText(text)
         self._close_dropdown()
         self.selection_changed.emit(data)
-
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.MouseButtonPress and self._dropdown:
-            # Close if the click is outside the dropdown
-            global_pos = event.globalPos() if hasattr(event, 'globalPos') else event.globalPosition().toPoint()
-            dropdown_rect = self._dropdown.geometry()
-            dropdown_global = self._dropdown.mapToGlobal(QPoint(0, 0))
-            from PyQt5.QtCore import QRect
-            actual_rect = QRect(dropdown_global, self._dropdown.size())
-            if not actual_rect.contains(global_pos):
-                self._close_dropdown()
-        return False

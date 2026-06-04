@@ -35,17 +35,6 @@ venv\Scripts\activate  # Windows
 pip install -r requirements.txt
 ```
 
-4. Copy environment file:
-```bash
-copy .env.example .env
-```
-
-5. Configure `.env` with your API URLs:
-```env
-API_BASE_URL=http://localhost:8002/api
-TRANSLATOR_URL=http://localhost:8000 (you have to clone the backend repository of this system: https://github.com/Famanias/snipshot-backend)
-```
-
 ## Running the App
 
 Make sure backend services are running first:
@@ -71,28 +60,6 @@ python main.py
 4. **Select Region** - Draw a rectangle around the manga/comic
 5. **Translate** - Wait for translation (1-2 minutes)
 6. **Save** - Choose a folder and save to your account
-
-## Building Executable
-
-### Using PyInstaller
-
-```bash
-pip install pyinstaller
-
-pyinstaller --onefile --windowed --name SnipShot --hidden-import=keyring --hidden-import=keyring.backends --hidden-import=keyring.backends.Windows main.py
-```
-
-The executable will be in `dist/SnipShot.exe`
-
-### Using Inno Setup
-
-After creating the PyInstaller executable, use Inno Setup to create an installer:
-
-1. Open Inno Setup Compiler
-2. Create new script with wizard
-3. Point to `dist/SnipShot.exe`
-4. Configure application info
-5. Compile to create installer
 
 ## Project Structure
 

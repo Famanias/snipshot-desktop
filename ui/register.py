@@ -155,7 +155,7 @@ class RegisterWindow(QWidget):
 
         # Register button
         self.register_btn = StyledButton("Create Account", variant="primary")
-        self.register_btn.setMinimumHeight(48)
+        self.register_btn.setMinimumHeight(44)
         self.register_btn.clicked.connect(self._on_register)
         cl.addWidget(self.register_btn)
 

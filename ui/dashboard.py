@@ -1952,8 +1952,18 @@ class DashboardWindow(QWidget):
         self.trash_drop_zone = TrashDropZone(self)
         self.trash_drop_zone.show()
 
+        # Create Back to Top button
+        self.back_to_top_btn = QPushButton("↑", self)
+        self.back_to_top_btn.setFixedSize(36, 36)
+        self.back_to_top_btn.setCursor(Qt.PointingHandCursor)
+        self.back_to_top_btn.hide()
+        self.back_to_top_btn.clicked.connect(self._scroll_to_top)
+
         # Create Drag & Drop Overlay
         self.drag_drop_overlay = DragDropOverlay(self)
+
+        # Connect scroll listener for infinite scroll and Back to Top display
+        self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_value_changed)
 
         self._apply_styles()
 
@@ -2096,6 +2106,7 @@ class DashboardWindow(QWidget):
             }}
         """)
         self._update_queue_badge()
+        self._apply_back_to_top_style()
 
     def _on_theme_toggle_clicked(self):
         theme.toggle()
@@ -2668,6 +2679,8 @@ class DashboardWindow(QWidget):
     def _add_image_grid(self, images: list, show_load_more: bool = False):
         display_images = images[:20]
         self.all_images = images
+        self._loaded_images_count = len(display_images)
+        self._scroll_loading = False
 
         self._image_grid_widget = QWidget()
         self._image_grid_widget.setStyleSheet("background-color: transparent;")
@@ -2684,31 +2697,29 @@ class DashboardWindow(QWidget):
             self._image_cards[image["id"]] = card
         self.content_layout.addWidget(self._image_grid_widget)
 
-        if len(images) > 20 or show_load_more:
-            self.load_more_btn = StyledButton("Load More Images", variant="primary")
-            self.load_more_btn.clicked.connect(self._load_more_images)
-            self.content_layout.addWidget(
-                self.load_more_btn, alignment=Qt.AlignCenter
-            )
+        # Create loading progress bar for infinite scroll prefetching
+        self._scroll_loading_widget = QProgressBar()
+        self._scroll_loading_widget.setRange(0, 0)
+        self._scroll_loading_widget.setTextVisible(False)
+        self._scroll_loading_widget.setFixedHeight(4)
+        c = theme.c
+        self._scroll_loading_widget.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                background-color: transparent;
+                margin-top: {SPACE['md']}px;
+                margin-bottom: {SPACE['md']}px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {c['primary']};
+                border-radius: 2px;
+            }}
+        """)
+        self._scroll_loading_widget.hide()
+        self.content_layout.addWidget(self._scroll_loading_widget)
 
-    def _load_more_images(self):
-        if not (hasattr(self, "all_images") and hasattr(self, "load_more_btn")):
-            return
-        self.content_layout.removeWidget(self.load_more_btn)
-        self.load_more_btn.deleteLater()
-
-        remaining_images = self.all_images[20:]
-        if remaining_images and getattr(self, "_image_grid_widget", None) is not None:
-            layout = self._image_grid_widget.layout()
-            if layout:
-                for image in remaining_images:
-                    card = ImageCard(image)
-                    card.clicked.connect(self._on_image_clicked)
-                    card.delete_requested.connect(self._on_delete_image)
-                    card.rename_requested.connect(self._on_rename_image)
-                    card.move_requested.connect(self._on_move_image)
-                    layout.addWidget(card)
-                    self._image_cards[image["id"]] = card
+        # Trigger viewport check to load more images automatically if screen height permits
+        self._check_and_fill_viewport()
 
     def _show_empty_state(self, title: str, subtitle: str):
         c = theme.c
@@ -4073,7 +4084,7 @@ class DashboardWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._reposition_trash_drop_zone()
+        self._reposition_floating_widgets()
         if hasattr(self, "drag_drop_overlay") and self.drag_drop_overlay:
             self.drag_drop_overlay.setGeometry(self.rect())
         if hasattr(self, "_current_toast") and self._current_toast:
@@ -4149,17 +4160,141 @@ class DashboardWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._reposition_trash_drop_zone()
+        self._reposition_floating_widgets()
 
-    def _reposition_trash_drop_zone(self):
+    def _reposition_floating_widgets(self):
+        margin_right = 24
+        margin_bottom = 24
+        
+        # Trash Drop Zone dimensions for math (decoupled layout)
+        trash_w = 64
+        trash_h = 64
+        trash_x = self.width() - trash_w - margin_right
+        trash_y = self.height() - trash_h - margin_bottom
+        
         if hasattr(self, "trash_drop_zone") and self.trash_drop_zone is not None:
-            margin_right = 24
-            margin_bottom = 24
-            trash_w = self.trash_drop_zone.width()
-            trash_h = self.trash_drop_zone.height()
-            new_x = self.width() - trash_w - margin_right
-            new_y = self.height() - trash_h - margin_bottom
-            self.trash_drop_zone.move(new_x, new_y)
+            self.trash_drop_zone.move(trash_x, trash_y)
+            
+        # Back to Top Button centered 12px above the trash zone bounds
+        btn_w = 36
+        btn_h = 36
+        btn_x = trash_x + (trash_w - btn_w) // 2
+        btn_y = trash_y - btn_h - 12
+        
+        if hasattr(self, "back_to_top_btn") and self.back_to_top_btn is not None:
+            self.back_to_top_btn.move(btn_x, btn_y)
+
+    def _apply_back_to_top_style(self):
+        if not hasattr(self, "back_to_top_btn") or self.back_to_top_btn is None:
+            return
+        c = theme.c
+        self.back_to_top_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['surface_alt']};
+                color: {c['text']};
+                border: 1px solid {c['border']};
+                border-radius: 18px;
+                font-size: 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {c['primary_subtle']};
+                color: {c['primary_dark'] if theme.is_dark else c['primary']};
+                border-color: {c['primary']};
+            }}
+        """)
+
+    def _scroll_to_top(self):
+        from PyQt5.QtCore import QVariantAnimation
+        scrollbar = self.scroll.verticalScrollBar()
+        self._scroll_animation = QVariantAnimation(self)
+        self._scroll_animation.setStartValue(scrollbar.value())
+        self._scroll_animation.setEndValue(0)
+        self._scroll_animation.setDuration(400) # 400ms smooth scroll
+        self._scroll_animation.valueChanged.connect(scrollbar.setValue)
+        self._scroll_animation.start()
+
+    def _on_scroll_value_changed(self, value):
+        # 1. Toggle Back to Top button based on scroll depth
+        if hasattr(self, "back_to_top_btn") and self.back_to_top_btn is not None:
+            if value > 600:
+                if self.back_to_top_btn.isHidden():
+                    self.back_to_top_btn.show()
+                    self.back_to_top_btn.raise_()
+            else:
+                if not self.back_to_top_btn.isHidden():
+                    self.back_to_top_btn.hide()
+
+        # 2. Check prefetching condition for infinite scroll
+        if not hasattr(self, "all_images") or not hasattr(self, "_loaded_images_count"):
+            return
+        if getattr(self, "_scroll_loading", False):
+            return
+        if self._loaded_images_count >= len(self.all_images):
+            return
+        if getattr(self, "_image_grid_widget", None) is None:
+            return
+
+        scrollbar = self.scroll.verticalScrollBar()
+        remaining = scrollbar.maximum() - value
+        if remaining < 400: # Prefetch threshold (400px remaining scroll)
+            self._load_next_page_batch()
+
+    def _check_and_fill_viewport(self):
+        if not hasattr(self, "all_images") or not hasattr(self, "_loaded_images_count"):
+            return
+        if getattr(self, "_scroll_loading", False):
+            return
+        if self._loaded_images_count >= len(self.all_images):
+            return
+        if getattr(self, "_image_grid_widget", None) is None:
+            return
+
+        scrollbar = self.scroll.verticalScrollBar()
+        if scrollbar.maximum() == 0:
+            # Viewport not filled, trigger next load immediately
+            self._load_next_page_batch()
+
+    def _load_next_page_batch(self):
+        # 1. Set loading flag immediately to prevent duplicate triggers
+        self._scroll_loading = True
+        
+        # 2. Show the progress bar loader
+        if hasattr(self, "_scroll_loading_widget") and self._scroll_loading_widget:
+            self._scroll_loading_widget.show()
+            
+        # 3. Defer the heavy rendering work to allow Qt to paint the loader
+        QTimer.singleShot(0, self._render_next_page_batch)
+
+    def _render_next_page_batch(self):
+        # Double check sanity conditions
+        if not hasattr(self, "all_images") or not hasattr(self, "_loaded_images_count") or getattr(self, "_image_grid_widget", None) is None:
+            self._scroll_loading = False
+            if hasattr(self, "_scroll_loading_widget") and self._scroll_loading_widget:
+                self._scroll_loading_widget.hide()
+            return
+
+        next_batch = self.all_images[self._loaded_images_count : self._loaded_images_count + 20]
+        if next_batch:
+            layout = self._image_grid_widget.layout()
+            if layout:
+                for image in next_batch:
+                    card = ImageCard(image)
+                    card.clicked.connect(self._on_image_clicked)
+                    card.delete_requested.connect(self._on_delete_image)
+                    card.rename_requested.connect(self._on_rename_image)
+                    card.move_requested.connect(self._on_move_image)
+                    layout.addWidget(card)
+                    self._image_cards[image["id"]] = card
+
+        self._loaded_images_count += len(next_batch)
+        self._scroll_loading = False
+        
+        if hasattr(self, "_scroll_loading_widget") and self._scroll_loading_widget:
+            self._scroll_loading_widget.hide()
+
+        # Check if another batch is needed to fill the viewport recursively (using 50ms single-shot timer for layout calculations)
+        QTimer.singleShot(50, self._check_and_fill_viewport)
 
     def _toggle_queue_drawer(self):
         """Toggle queue sidebar visibility."""

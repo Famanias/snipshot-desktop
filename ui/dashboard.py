@@ -27,13 +27,17 @@ SnipShot Desktop - Dashboard Window
 Main dashboard with folder/image management (Google Drive-style).
 """
 
+import os
+
+SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp')
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame, QScrollArea, QGridLayout, QMenu, QAction,
     QInputDialog, QMessageBox, QSizePolicy, QListWidget,
     QListWidgetItem, QStackedWidget, QProgressBar, QDialog,
     QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox,
-    QLayout, QSplitter, QSpinBox, QDoubleSpinBox, QSlider,
+    QLayout, QSplitter, QSpinBox, QDoubleSpinBox, QSlider, QToolButton,
 )
 from typing import Optional
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread, QRect, QPoint
@@ -529,7 +533,9 @@ class FolderCard(QFrame):
     clicked = pyqtSignal(int, str)
     delete_requested = pyqtSignal(int, str)
     rename_requested = pyqtSignal(int, str)
+    move_requested = pyqtSignal(int, str)
     image_dropped = pyqtSignal(int, int)
+    folder_dropped = pyqtSignal(int, int)
 
     def __init__(self, folder_data: dict, parent=None):
         super().__init__(parent)
@@ -542,7 +548,7 @@ class FolderCard(QFrame):
         theme.theme_changed.connect(self._on_theme_changed)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-snipshot-image-id"):
+        if event.mimeData().hasFormat("application/x-snipshot-image-id") or event.mimeData().hasFormat("application/x-snipshot-folder-id"):
             event.acceptProposedAction()
             self.setProperty("dragOver", True)
             self.style().unpolish(self)
@@ -552,7 +558,7 @@ class FolderCard(QFrame):
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasFormat("application/x-snipshot-image-id"):
+        if event.mimeData().hasFormat("application/x-snipshot-image-id") or event.mimeData().hasFormat("application/x-snipshot-folder-id"):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -576,6 +582,17 @@ class FolderCard(QFrame):
                 image_id = int(image_id_str)
                 self.image_dropped.emit(self.folder_id, image_id)
                 event.acceptProposedAction()
+            except ValueError:
+                event.ignore()
+        elif mime_data.hasFormat("application/x-snipshot-folder-id"):
+            folder_id_str = mime_data.data("application/x-snipshot-folder-id").data().decode('utf-8')
+            try:
+                source_folder_id = int(folder_id_str)
+                if source_folder_id != self.folder_id:
+                    self.folder_dropped.emit(self.folder_id, source_folder_id)
+                    event.acceptProposedAction()
+                else:
+                    event.ignore()
             except ValueError:
                 event.ignore()
         else:
@@ -728,6 +745,10 @@ class FolderCard(QFrame):
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(
             lambda: self.rename_requested.emit(self.folder_id, self.folder_name)
+        )
+        move_action = menu.addAction("Move to...")
+        move_action.triggered.connect(
+            lambda: self.move_requested.emit(self.folder_id, self.folder_name)
         )
         menu.addSeparator()
         delete_action = menu.addAction("Delete")
@@ -1060,8 +1081,8 @@ class TrashDropZone(QFrame):
         apply_card_shadow(self)
 
         # Reposition parent if parent is DashboardWindow
-        if hasattr(self.parent(), "_reposition_trash_drop_zone"):
-            self.parent()._reposition_trash_drop_zone()
+        if hasattr(self.parent(), "_reposition_floating_widgets"):
+            self.parent()._reposition_floating_widgets()
 
     def _on_theme_changed(self, _mode=None):
         self._apply_style()
@@ -1111,6 +1132,274 @@ class TrashDropZone(QFrame):
                 event.ignore()
         else:
             event.ignore()
+
+
+class DragDropOverlay(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.hide()
+        self._setup_ui()
+        theme.theme_changed.connect(self._apply_style)
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Inner frame for dashed border
+        self.inner_frame = QFrame()
+        inner_layout = QVBoxLayout(self.inner_frame)
+        inner_layout.setAlignment(Qt.AlignCenter)
+        inner_layout.setSpacing(SPACE["sm"])
+
+        self.icon_lbl = QLabel()
+        self.icon_lbl.setAlignment(Qt.AlignCenter)
+        inner_layout.addWidget(self.icon_lbl)
+
+        self.text_lbl = QLabel("Drop images here to translate")
+        self.text_lbl.setAlignment(Qt.AlignCenter)
+        inner_layout.addWidget(self.text_lbl)
+
+        layout.addWidget(self.inner_frame)
+        self._apply_style()
+
+    def _apply_style(self):
+        c = theme.c
+        self.inner_frame.setFixedSize(320, 200)
+        self.inner_frame.setStyleSheet(f"""
+            QFrame {{
+                border: 2px dashed {c['primary']};
+                border-radius: 16px;
+                background-color: {c['surface']};
+            }}
+        """)
+        icon_pixmap = load_icon("translate_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg").pixmap(48, 48)
+        self.icon_lbl.setPixmap(icon_pixmap)
+        self.text_lbl.setStyleSheet(f"""
+            QLabel {{
+                font-size: 16px;
+                font-weight: 600;
+                color: {c['text']};
+                background: transparent;
+            }}
+        """)
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: rgba(0, 0, 0, 0.4);
+            }}
+        """)
+
+    def set_drag_state(self, has_valid, has_folders, has_unsupported):
+        c = theme.c
+        if has_folders:
+            self.inner_frame.setStyleSheet(f"""
+                QFrame {{
+                    border: 2px dashed {c['error']};
+                    border-radius: 16px;
+                    background-color: {c['surface']};
+                }}
+            """)
+            self.text_lbl.setText("Folders are not supported")
+            self.text_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {c['error']}; background: transparent;")
+        elif has_unsupported and not has_valid:
+            self.inner_frame.setStyleSheet(f"""
+                QFrame {{
+                    border: 2px dashed {c['error']};
+                    border-radius: 16px;
+                    background-color: {c['surface']};
+                }}
+            """)
+            self.text_lbl.setText("Unsupported file type(s)")
+            self.text_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {c['error']}; background: transparent;")
+        else:
+            self.inner_frame.setStyleSheet(f"""
+                QFrame {{
+                    border: 2px dashed {c['primary']};
+                    border-radius: 16px;
+                    background-color: {c['surface']};
+                }}
+            """)
+            self.text_lbl.setText("Drop images here to translate")
+            self.text_lbl.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {c['primary']}; background: transparent;")
+
+    def dragEnterEvent(self, event):
+        has_valid, has_folders, has_unsupported = self.parent()._check_drag_data(event.mimeData())
+        self.set_drag_state(has_valid, has_folders, has_unsupported)
+        event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self.hide()
+        event.accept()
+
+    def dropEvent(self, event):
+        self.hide()
+        self.parent()._handle_file_drop(event.mimeData())
+        event.acceptProposedAction()
+
+
+class SectionHeader(QWidget):
+    toggled = pyqtSignal(bool)  # Emits True if expanded, False if collapsed
+
+    def __init__(self, text: str, is_expanded: bool = True, parent=None):
+        super().__init__(parent)
+        self.text = text
+        self.is_expanded = is_expanded
+        self._setup_ui()
+        theme.theme_changed.connect(self._apply_style)
+
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE["xs"])
+        layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        # Arrow toggle button
+        self.arrow_btn = QToolButton()
+        self.arrow_btn.setCursor(Qt.PointingHandCursor)
+        self.arrow_btn.clicked.connect(self.toggle)
+
+        # Flat button for the text label
+        self.text_btn = QPushButton(self.text)
+        self.text_btn.setCursor(Qt.PointingHandCursor)
+        self.text_btn.clicked.connect(self.toggle)
+
+        layout.addWidget(self.arrow_btn)
+        layout.addWidget(self.text_btn)
+
+        self._apply_style()
+
+    def _apply_style(self):
+        c = theme.c
+        arrow_char = "▼" if self.is_expanded else "▶"
+        self.arrow_btn.setText(arrow_char)
+        
+        self.arrow_btn.setStyleSheet(f"""
+            QToolButton {{
+                color: {c['text_secondary']};
+                font-size: 11px;
+                font-weight: bold;
+                background-color: transparent;
+                border: none;
+                padding: 0;
+            }}
+            QToolButton:hover {{
+                color: {c['primary']};
+            }}
+        """)
+        self.text_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 12px;
+                font-weight: 700;
+                color: {c['text_secondary']};
+                background-color: transparent;
+                text-transform: uppercase;
+                border: none;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                color: {c['primary']};
+            }}
+        """)
+
+    def toggle(self):
+        self.is_expanded = not self.is_expanded
+        self._apply_style()
+        self.toggled.emit(self.is_expanded)
+
+
+class ToastNotification(QWidget):
+    def __init__(self, parent, message, type="info"):
+        super().__init__(parent)
+        self.type = type
+        self.message = message
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.close_toast)
+        self.timer.start(4000) # 4 seconds
+        self._setup_ui()
+        theme.theme_changed.connect(self._apply_style)
+
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(SPACE["sm"])
+
+        self.emoji_lbl = QLabel()
+        self.emoji_lbl.setStyleSheet("font-size: 16px; background: transparent; border: none;")
+        layout.addWidget(self.emoji_lbl)
+
+        self.text_lbl = QLabel(self.message)
+        self.text_lbl.setWordWrap(True)
+        layout.addWidget(self.text_lbl, 1)
+
+        self.close_btn = QPushButton()
+        self.close_btn.setFixedSize(16, 16)
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        self.close_btn.setIcon(load_icon("close_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        self.close_btn.setIconSize(QSize(10, 10))
+        self.close_btn.clicked.connect(self.close_toast)
+        layout.addWidget(self.close_btn)
+
+        self._apply_style()
+        self.adjustSize()
+        self.reposition()
+
+    def _apply_style(self):
+        c = theme.c
+        border_color = c['border']
+        if self.type == "success":
+            self.emoji_lbl.setText("✅")
+            border_color = c['primary']
+        elif self.type == "error":
+            self.emoji_lbl.setText("❌")
+            border_color = c['error']
+        else:
+            self.emoji_lbl.setText("ℹ️")
+            border_color = c['text_secondary']
+
+        self.text_lbl.setStyleSheet(f"""
+            QLabel {{
+                color: {c['text']};
+                font-size: 13px;
+                font-weight: 500;
+                background: transparent;
+                border: none;
+            }}
+        """)
+        self.close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                border-radius: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {c['hover']};
+            }}
+        """)
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {c['surface_alt']};
+                border: 1px solid {border_color};
+                border-radius: 8px;
+            }}
+        """)
+
+    def reposition(self):
+        if not self.parent():
+            return
+        p_width = self.parent().width()
+        x = (p_width - self.width()) // 2
+        y = 70
+        self.move(x, y)
+        self.raise_()
+
+    def close_toast(self):
+        self.hide()
+        self.deleteLater()
 
 
 class ElidedLabel(QLabel):
@@ -1362,6 +1651,7 @@ class DashboardWindow(QWidget):
         self._current_view = "root"        # "root" | "folder" | "recent"
         self._current_folder_id = None
         self._current_folder_name = ""
+        self._folder_nav_history = []      # list of (folder_id, folder_name)
         self.search_worker = None
         self.cache_loader_worker = None
         self.cache_update_worker = None
@@ -1369,6 +1659,11 @@ class DashboardWindow(QWidget):
         self.folder_grid_layout = None
         self._image_grid_widget = None
         self._queue_widgets = {}
+
+        self._folders_expanded = True
+        self._images_expanded = True
+        self._folders_container = None
+        self._images_container = None
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -1391,6 +1686,7 @@ class DashboardWindow(QWidget):
         setattr(self, attr, None)
 
     def _setup_ui(self):
+        self.setAcceptDrops(True)
         c = theme.c
 
         # Outer layout that holds TopAppBar and Split Area
@@ -1709,11 +2005,6 @@ class DashboardWindow(QWidget):
         self.q_empty_label.setStyleSheet(f"color: {c['text_secondary']}; font-size: {FONT['caption']['size']}px; padding: {SPACE['lg']}px;")
         queue_layout.addWidget(self.q_empty_label)
 
-        # Clear Completed Button
-        self.q_clear_btn = StyledButton("Clear Completed", variant="secondary")
-        self.q_clear_btn.clicked.connect(self._clear_completed_queue)
-        queue_layout.addWidget(self.q_clear_btn)
-
         split_layout.addWidget(self.sidebar)
         
         # Create a splitter for main content and queue sidebar
@@ -1735,6 +2026,19 @@ class DashboardWindow(QWidget):
         # Create floating Trash Drop Zone
         self.trash_drop_zone = TrashDropZone(self)
         self.trash_drop_zone.show()
+
+        # Create Back to Top button
+        self.back_to_top_btn = QPushButton("↑", self)
+        self.back_to_top_btn.setFixedSize(36, 36)
+        self.back_to_top_btn.setCursor(Qt.PointingHandCursor)
+        self.back_to_top_btn.hide()
+        self.back_to_top_btn.clicked.connect(self._scroll_to_top)
+
+        # Create Drag & Drop Overlay
+        self.drag_drop_overlay = DragDropOverlay(self)
+
+        # Connect scroll listener for infinite scroll and Back to Top display
+        self.scroll.verticalScrollBar().valueChanged.connect(self._on_scroll_value_changed)
 
         self._apply_styles()
 
@@ -1877,6 +2181,7 @@ class DashboardWindow(QWidget):
             }}
         """)
         self._update_queue_badge()
+        self._apply_back_to_top_style()
 
     def _on_theme_toggle_clicked(self):
         theme.toggle()
@@ -2176,6 +2481,10 @@ class DashboardWindow(QWidget):
         self.folder_grid = None
         self.folder_grid_layout = None
         self._image_grid_widget = None
+        self._folders_expanded = True
+        self._images_expanded = True
+        self._folders_container = None
+        self._images_container = None
 
     def _load_all_files_async(self):
         self._start_cache_load()
@@ -2241,6 +2550,7 @@ class DashboardWindow(QWidget):
         self.current_folder_name = None
         self._current_folder_id = None
         self._current_folder_name = ""
+        self._folder_nav_history = []
         self.header_title.setText("My Files")
         if len(self._cached_images) >= CacheLoaderWorker.SOFT_CAP:
             self.header_subtitle.setText("Root / All Files (Notice: Showing first 10,000 items. Use search to find others.)")
@@ -2250,21 +2560,20 @@ class DashboardWindow(QWidget):
         self._clear_content()
 
         c = theme.c
-        folders = self._cached_folders
+        folders = [f for f in self._cached_folders if f.get("parent_folder_id") is None]
         images = self._cached_images
         unfiled_images = [img for img in images if img.get("folder_id") is None]
 
         if folders:
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['primary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel("Folders")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent; text-transform: uppercase;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+            header = SectionHeader("Folders", self._folders_expanded, self)
+            header.toggled.connect(self._toggle_folders)
+            self.content_layout.addWidget(header)
+
+            self._folders_container = QWidget()
+            self._folders_container.setStyleSheet("background-color: transparent;")
+            folders_container_layout = QVBoxLayout(self._folders_container)
+            folders_container_layout.setContentsMargins(0, 0, 0, 0)
+            folders_container_layout.setSpacing(0)
 
             self.folder_grid = QWidget()
             self.folder_grid.setStyleSheet("background-color: transparent;")
@@ -2276,27 +2585,32 @@ class DashboardWindow(QWidget):
                 card.clicked.connect(self._on_folder_clicked)
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
+                card.move_requested.connect(self._on_move_folder)
                 card.image_dropped.connect(self._on_image_dropped)
+                card.folder_dropped.connect(self._move_folder_to_folder)
                 self.folder_grid_layout.addWidget(card)
                 self._folder_cards[folder["id"]] = card
 
-            self.content_layout.addWidget(self.folder_grid)
+            folders_container_layout.addWidget(self.folder_grid)
+            self.content_layout.addWidget(self._folders_container)
+            self._folders_container.setVisible(self._folders_expanded)
 
         if unfiled_images:
             self.content_layout.addSpacing(SPACE["md"])
 
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['text_secondary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel("Unfiled Images")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent; text-transform: uppercase;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+            header = SectionHeader("Unfiled Images", self._images_expanded, self)
+            header.toggled.connect(self._toggle_images)
+            self.content_layout.addWidget(header)
+
+            self._images_container = QWidget()
+            self._images_container.setStyleSheet("background-color: transparent;")
+            images_container_layout = QVBoxLayout(self._images_container)
+            images_container_layout.setContentsMargins(0, 0, 0, 0)
+            images_container_layout.setSpacing(0)
 
             self._add_image_grid(unfiled_images)
+            self.content_layout.addWidget(self._images_container)
+            self._images_container.setVisible(self._images_expanded)
 
         if not folders and not unfiled_images:
             self._show_empty_state(
@@ -2312,22 +2626,75 @@ class DashboardWindow(QWidget):
         self._current_folder_name = folder_name
         self._set_active_nav("all")
         self.header_title.setText(folder_name)
-        self.header_subtitle.setText(f"Root / Folders / {folder_name}")
+        
+        # Build breadcrumbs path dynamically
+        breadcrumbs = self._get_breadcrumbs(folder_id)
+        breadcrumb_str = "Root / Folders / " + " / ".join(f["name"] for f in breadcrumbs)
+        self.header_subtitle.setText(breadcrumb_str)
         self._clear_content()
 
         back_btn = StyledButton("", variant="ghost")
         back_btn.setIcon(load_icon("keyboard_backspace_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
         back_btn.setIconSize(QSize(24, 24))
-        back_btn.setToolTip("Back to My Files")
+        back_btn.setToolTip("Back")
         back_btn.setMaximumWidth(50)
-        back_btn.clicked.connect(self._on_nav_all)
+        back_btn.clicked.connect(self._on_nav_back)
         self.content_layout.addWidget(back_btn, alignment=Qt.AlignLeft)
 
+        c = theme.c
+        subfolders = [f for f in self._cached_folders if f.get("parent_folder_id") == folder_id]
         folder_images = [img for img in self._cached_images if img.get("folder_id") == folder_id]
 
+        if subfolders:
+            header = SectionHeader("Subfolders", self._folders_expanded, self)
+            header.toggled.connect(self._toggle_folders)
+            self.content_layout.addWidget(header)
+
+            self._folders_container = QWidget()
+            self._folders_container.setStyleSheet("background-color: transparent;")
+            folders_container_layout = QVBoxLayout(self._folders_container)
+            folders_container_layout.setContentsMargins(0, 0, 0, 0)
+            folders_container_layout.setSpacing(0)
+
+            self.folder_grid = QWidget()
+            self.folder_grid.setStyleSheet("background-color: transparent;")
+            self.folder_grid_layout = FlowLayout(self.folder_grid, spacing=SPACE["md"])
+
+            self._folder_cards = {}
+            for folder in subfolders:
+                card = FolderCard(folder)
+                card.clicked.connect(self._on_folder_clicked)
+                card.delete_requested.connect(self._on_delete_folder)
+                card.rename_requested.connect(self._on_rename_folder)
+                card.move_requested.connect(self._on_move_folder)
+                card.image_dropped.connect(self._on_image_dropped)
+                card.folder_dropped.connect(self._move_folder_to_folder)
+                self.folder_grid_layout.addWidget(card)
+                self._folder_cards[folder["id"]] = card
+
+            folders_container_layout.addWidget(self.folder_grid)
+            self.content_layout.addWidget(self._folders_container)
+            self._folders_container.setVisible(self._folders_expanded)
+            self.content_layout.addSpacing(SPACE["md"])
+
         if folder_images:
+            if subfolders:
+                header = SectionHeader("Images", self._images_expanded, self)
+                header.toggled.connect(self._toggle_images)
+                self.content_layout.addWidget(header)
+
+                self._images_container = QWidget()
+                self._images_container.setStyleSheet("background-color: transparent;")
+                images_container_layout = QVBoxLayout(self._images_container)
+                images_container_layout.setContentsMargins(0, 0, 0, 0)
+                images_container_layout.setSpacing(0)
+
             self._add_image_grid(folder_images)
-        else:
+            
+            if subfolders:
+                self.content_layout.addWidget(self._images_container)
+                self._images_container.setVisible(self._images_expanded)
+        elif not subfolders:
             self._show_empty_state(
                 "This folder is empty",
                 "Translated images saved to this folder will appear here.",
@@ -2398,6 +2765,8 @@ class DashboardWindow(QWidget):
     def _add_image_grid(self, images: list, show_load_more: bool = False):
         display_images = images[:20]
         self.all_images = images
+        self._loaded_images_count = len(display_images)
+        self._scroll_loading = False
 
         self._image_grid_widget = QWidget()
         self._image_grid_widget.setStyleSheet("background-color: transparent;")
@@ -2412,33 +2781,37 @@ class DashboardWindow(QWidget):
             card.move_requested.connect(self._on_move_image)
             grid_layout.addWidget(card)
             self._image_cards[image["id"]] = card
-        self.content_layout.addWidget(self._image_grid_widget)
 
-        if len(images) > 20 or show_load_more:
-            self.load_more_btn = StyledButton("Load More Images", variant="primary")
-            self.load_more_btn.clicked.connect(self._load_more_images)
-            self.content_layout.addWidget(
-                self.load_more_btn, alignment=Qt.AlignCenter
-            )
+        # Determine target layout (uses images container if defined, otherwise defaults to content layout)
+        target_layout = self.content_layout
+        if hasattr(self, "_images_container") and self._images_container is not None and self._images_container.layout() is not None:
+            target_layout = self._images_container.layout()
 
-    def _load_more_images(self):
-        if not (hasattr(self, "all_images") and hasattr(self, "load_more_btn")):
-            return
-        self.content_layout.removeWidget(self.load_more_btn)
-        self.load_more_btn.deleteLater()
+        target_layout.addWidget(self._image_grid_widget)
 
-        remaining_images = self.all_images[20:]
-        if remaining_images and getattr(self, "_image_grid_widget", None) is not None:
-            layout = self._image_grid_widget.layout()
-            if layout:
-                for image in remaining_images:
-                    card = ImageCard(image)
-                    card.clicked.connect(self._on_image_clicked)
-                    card.delete_requested.connect(self._on_delete_image)
-                    card.rename_requested.connect(self._on_rename_image)
-                    card.move_requested.connect(self._on_move_image)
-                    layout.addWidget(card)
-                    self._image_cards[image["id"]] = card
+        # Create loading progress bar for infinite scroll prefetching
+        self._scroll_loading_widget = QProgressBar()
+        self._scroll_loading_widget.setRange(0, 0)
+        self._scroll_loading_widget.setTextVisible(False)
+        self._scroll_loading_widget.setFixedHeight(4)
+        c = theme.c
+        self._scroll_loading_widget.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                background-color: transparent;
+                margin-top: {SPACE['md']}px;
+                margin-bottom: {SPACE['md']}px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {c['primary']};
+                border-radius: 2px;
+            }}
+        """)
+        self._scroll_loading_widget.hide()
+        target_layout.addWidget(self._scroll_loading_widget)
+
+        # Trigger viewport check to load more images automatically if screen height permits
+        self._check_and_fill_viewport()
 
     def _show_empty_state(self, title: str, subtitle: str):
         c = theme.c
@@ -2490,11 +2863,12 @@ class DashboardWindow(QWidget):
     def _on_upload(self):
         from PyQt5.QtWidgets import QFileDialog
 
+        extensions_filter = " ".join("*" + ext for ext in SUPPORTED_IMAGE_EXTENSIONS)
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Select Images",
             "",
-            "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
+            f"Images ({extensions_filter})",
         )
         if file_paths:
             self.upload_requested.emit(file_paths)
@@ -2576,43 +2950,50 @@ class DashboardWindow(QWidget):
         query = self.search_input.text()
 
         if folders:
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['primary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel(f"Folders Matching \"{query}\"")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+            header = SectionHeader(f"Folders Matching \"{query}\"", self._folders_expanded, self)
+            header.toggled.connect(self._toggle_folders)
+            self.content_layout.addWidget(header)
 
-            folder_grid = QWidget()
-            folder_grid_layout = FlowLayout(folder_grid, spacing=SPACE["md"])
+            self._folders_container = QWidget()
+            self._folders_container.setStyleSheet("background-color: transparent;")
+            folders_container_layout = QVBoxLayout(self._folders_container)
+            folders_container_layout.setContentsMargins(0, 0, 0, 0)
+            folders_container_layout.setSpacing(0)
+
+            self.folder_grid = QWidget()
+            self.folder_grid.setStyleSheet("background-color: transparent;")
+            self.folder_grid_layout = FlowLayout(self.folder_grid, spacing=SPACE["md"])
             for folder in folders:
                 card = FolderCard(folder)
                 card.clicked.connect(self._on_folder_clicked)
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
                 card.image_dropped.connect(self._on_image_dropped)
-                folder_grid_layout.addWidget(card)
-            self.content_layout.addWidget(folder_grid)
+                self.folder_grid_layout.addWidget(card)
+
+            folders_container_layout.addWidget(self.folder_grid)
+            self.content_layout.addWidget(self._folders_container)
+            self._folders_container.setVisible(self._folders_expanded)
 
         if images:
             if folders:
                 self.content_layout.addSpacing(SPACE["lg"])
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['primary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel(f"Images Matching \"{query}\"")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+                
+                header = SectionHeader(f"Images Matching \"{query}\"", self._images_expanded, self)
+                header.toggled.connect(self._toggle_images)
+                self.content_layout.addWidget(header)
+
+                self._images_container = QWidget()
+                self._images_container.setStyleSheet("background-color: transparent;")
+                images_container_layout = QVBoxLayout(self._images_container)
+                images_container_layout.setContentsMargins(0, 0, 0, 0)
+                images_container_layout.setSpacing(0)
 
             self._add_image_grid(images)
+            
+            if folders:
+                self.content_layout.addWidget(self._images_container)
+                self._images_container.setVisible(self._images_expanded)
 
         if not folders and not images:
             self._show_empty_state(
@@ -3308,7 +3689,121 @@ class DashboardWindow(QWidget):
         return text if text else QKeySequence(key).toString()
 
     def _on_folder_clicked(self, folder_id: int, folder_name: str):
+        if self._current_view == "root":
+            self._folder_nav_history = []
+        elif self._current_view == "folder" and self._current_folder_id is not None:
+            if not self._folder_nav_history or self._folder_nav_history[-1][0] != self._current_folder_id:
+                self._folder_nav_history.append((self._current_folder_id, self._current_folder_name))
         self._load_folder(folder_id, folder_name)
+
+    def _on_nav_back(self):
+        if self._folder_nav_history:
+            prev_id, prev_name = self._folder_nav_history.pop()
+            self._load_folder(prev_id, prev_name)
+        else:
+            self._render_root_view()
+
+    def _get_breadcrumbs(self, folder_id: int) -> list:
+        path = []
+        curr_id = folder_id
+        folder_map = {f["id"]: f for f in self._cached_folders}
+        visited = set()
+        while curr_id and curr_id not in visited:
+            visited.add(curr_id)
+            f = folder_map.get(curr_id)
+            if not f:
+                break
+            path.append(f)
+            curr_id = f.get("parent_folder_id")
+        path.reverse()
+        return path
+
+    def _is_descendant(self, parent_id: int, child_id: int) -> bool:
+        """Check if child_id is a descendant of parent_id."""
+        if parent_id == child_id:
+            return True
+        
+        folder_map = {f["id"]: f for f in self._cached_folders}
+        curr_id = child_id
+        visited = set()
+        while curr_id and curr_id not in visited:
+            visited.add(curr_id)
+            f = folder_map.get(curr_id)
+            if not f:
+                break
+            parent = f.get("parent_folder_id")
+            if parent == parent_id:
+                return True
+            curr_id = parent
+        return False
+
+    def _move_folder_to_folder(self, target_folder_id: int, source_folder_id: int):
+        """Move source_folder_id inside target_folder_id after checking for circular references."""
+        if self._is_descendant(source_folder_id, target_folder_id):
+            QMessageBox.warning(
+                self,
+                "Invalid Move",
+                "Cannot move a folder into its own subfolder."
+            )
+            return
+
+        result = api_client.update_folder(source_folder_id, parent_folder_id=target_folder_id)
+        if result.get("success"):
+            updated_folder = result.get("data")
+            if updated_folder:
+                for f in self._cached_folders:
+                    if f["id"] == source_folder_id:
+                        f["parent_folder_id"] = target_folder_id
+                        break
+            self._restore_current_view()
+        else:
+            QMessageBox.warning(
+                self,
+                "Error",
+                result.get("error", "Failed to move folder")
+            )
+
+    def _on_move_folder(self, folder_id: int, current_name: str):
+        """Show dialog allowing user to move folder_id inside another folder or to Root."""
+        folders = self._cached_folders
+        # Exclude the folder itself and its descendants to prevent circular loops
+        valid_folders = [f for f in folders if f["id"] != folder_id and not self._is_descendant(folder_id, f["id"])]
+        
+        folder_names = ["Root"] + [f["name"] for f in valid_folders]
+        folder_ids = [None] + [f["id"] for f in valid_folders]
+        
+        curr_folder = next((f for f in folders if f["id"] == folder_id), None)
+        curr_parent_id = curr_folder.get("parent_folder_id") if curr_folder else None
+        
+        current_idx = 0
+        if curr_parent_id is not None:
+            try:
+                current_idx = folder_ids.index(curr_parent_id)
+            except ValueError:
+                current_idx = 0
+                
+        choice, ok = QInputDialog.getItem(
+            self,
+            "Move Folder",
+            f"Move folder '{current_name}' to:",
+            folder_names,
+            current_idx,
+            False,
+        )
+        if ok and choice:
+            idx = folder_names.index(choice)
+            target_parent_id = folder_ids[idx]
+            result = api_client.update_folder(folder_id, parent_folder_id=target_parent_id)
+            if result.get("success"):
+                for f in self._cached_folders:
+                    if f["id"] == folder_id:
+                        f["parent_folder_id"] = target_parent_id
+                        break
+                self._restore_current_view()
+            else:
+                QMessageBox.warning(
+                    self, "Error", result.get("error", "Failed to move folder")
+                )
 
     def _on_image_clicked(self, image_id: int):
         image_data = self._get_cached_image(image_id)
@@ -3338,13 +3833,14 @@ class DashboardWindow(QWidget):
         if dialog.exec_() == QDialog.Accepted:
             name, description = dialog.get_values()
             if name:
-                result = api_client.create_folder(name, description)
+                parent_id = self._current_folder_id if self._current_view == "folder" else None
+                result = api_client.create_folder(name, description, parent_folder_id=parent_id)
                 if result.get("success"):
                     new_folder = result.get("data")
                     if new_folder:
                         new_folder["image_count"] = 0
                         self._cached_folders.insert(0, new_folder)
-                        self._add_folder_card_widget(new_folder)
+                        self._restore_current_view()
                 else:
                     QMessageBox.warning(
                         self,
@@ -3353,52 +3849,157 @@ class DashboardWindow(QWidget):
                     )
 
     def _on_delete_folder(self, folder_id: int, folder_name: str):
+        # Find parent_folder_id of the deleted folder
+        target_folder = next((f for f in self._cached_folders if f["id"] == folder_id), None)
+        parent_id = target_folder.get("parent_folder_id") if target_folder else None
+
         msg = QMessageBox(self)
         msg.setWindowTitle("Delete Folder")
         msg.setText(f"Delete folder '{folder_name}'?")
-        msg.setInformativeText("Choose how to handle the images inside.")
-        keep_btn = msg.addButton(
-            "Delete Folder (Keep Images)", QMessageBox.AcceptRole
+        msg.setInformativeText("Choose how to handle any subfolders and images inside:")
+        
+        promote_btn = msg.addButton(
+            "Promote Contents (Move to Parent/Root)", QMessageBox.AcceptRole
         )
         delete_all_btn = msg.addButton(
-            "Delete Folder + All Images", QMessageBox.DestructiveRole
+            "Delete Folder + All Contents Recursively", QMessageBox.DestructiveRole
         )
         msg.addButton("Cancel", QMessageBox.RejectRole)
         msg.exec_()
 
         clicked = msg.clickedButton()
-        delete_images = False
-        if clicked == keep_btn:
-            delete_images = False
+        if clicked == promote_btn:
+            action = "promote"
         elif clicked == delete_all_btn:
-            delete_images = True
+            action = "delete_all"
         else:
             return
 
-        result = api_client.delete_folder(folder_id, delete_images=delete_images)
+        QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+        try:
+            if action == "promote":
+                # 1. Promote subfolders to parent_id
+                subfolders = [f for f in self._cached_folders if f.get("parent_folder_id") == folder_id]
+                failed_folders = []
+                for sf in subfolders:
+                    res = api_client.update_folder(sf["id"], parent_folder_id=parent_id)
+                    if res.get("success"):
+                        sf["parent_folder_id"] = parent_id
+                    else:
+                        failed_folders.append(sf["name"])
 
-        if result.get("success"):
-            # Update local cache
-            self._cached_folders = [f for f in self._cached_folders if f["id"] != folder_id]
-            if delete_images:
-                # Remove all images inside this folder
-                self._cached_images = [img for img in self._cached_images if img.get("folder_id") != folder_id]
-            else:
-                # Set folder_id to None for all images inside this folder
+                # 2. Promote images in this folder to parent_id
+                images = [img for img in self._cached_images if img.get("folder_id") == folder_id]
+                failed_images = []
+                for img in images:
+                    res = api_client.move_image_to_folder(img["id"], folder_id=parent_id)
+                    if res.get("success"):
+                        img["folder_id"] = parent_id
+                    else:
+                        failed_images.append(img.get("filename") or f"Image ID {img['id']}")
+
+                # Report promote partial failures if any
+                if failed_folders or failed_images:
+                    QApplication.restoreOverrideCursor()
+                    QMessageBox.warning(
+                        self,
+                        "Partial Failures",
+                        f"Failed to promote some items:\n"
+                        f"Folders: {', '.join(failed_folders) if failed_folders else 'None'}\n"
+                        f"Images: {', '.join(failed_images) if failed_images else 'None'}"
+                    )
+                    QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+
+                # 3. Delete the folder row
+                res = api_client.delete_folder(folder_id, delete_images=False)
+                if res.get("success"):
+                    self._cached_folders = [f for f in self._cached_folders if f["id"] != folder_id]
+                    # If currently viewing this folder, go back
+                    if self._current_view == "folder" and self._current_folder_id == folder_id:
+                        self._on_nav_back()
+                    else:
+                        self._restore_current_view()
+                else:
+                    QApplication.restoreOverrideCursor()
+                    QMessageBox.warning(
+                        self,
+                        "Error",
+                        res.get("error", "Failed to delete the folder itself.")
+                    )
+
+            elif action == "delete_all":
+                # 1. Collect all subfolder IDs and images recursively
+                folder_ids = [folder_id]
+                image_ids = []
+                
+                # Stack for DFS
+                subfolder_map = {}
+                for f in self._cached_folders:
+                    p_id = f.get("parent_folder_id")
+                    if p_id is not None:
+                        subfolder_map.setdefault(p_id, []).append(f["id"])
+                        
+                stack = [folder_id]
+                visited = set()
+                while stack:
+                    curr = stack.pop()
+                    if curr in visited:
+                        continue
+                    visited.add(curr)
+                    if curr != folder_id:
+                        folder_ids.append(curr)
+                    children = subfolder_map.get(curr, [])
+                    for child in children:
+                        if child not in visited:
+                            stack.append(child)
+
+                # Collect all images inside any of these folders
                 for img in self._cached_images:
-                    if img.get("folder_id") == folder_id:
-                        img["folder_id"] = None
-            
-            # If current view was the deleted folder, navigate back to root/all
-            if self._current_view == "folder" and self._current_folder_id == folder_id:
-                self._on_nav_all()
-            else:
-                if delete_images:
-                    self._remove_folder_card_widget(folder_id)
+                    if img.get("folder_id") in folder_ids:
+                        image_ids.append(img)
+
+                failed_images = []
+                # Handle storage deletion before DB deletion (built into delete_image API method)
+                for img in image_ids:
+                    res = api_client.delete_image(img["id"])
+                    if res.get("success"):
+                        self._cached_images = [i for i in self._cached_images if i["id"] != img["id"]]
+                    else:
+                        failed_images.append(img.get("filename") or f"Image ID {img['id']}")
+
+                failed_folders = []
+                # Delete folders bottom-up (reverse order of DFS traversal is perfect since parents are pushed first)
+                for fid in reversed(folder_ids):
+                    res = api_client.delete_folder(fid, delete_images=False)
+                    if res.get("success"):
+                        self._cached_folders = [f for f in self._cached_folders if f["id"] != fid]
+                    else:
+                        fname = next((f["name"] for f in self._cached_folders if f["id"] == fid), f"Folder ID {fid}")
+                        failed_folders.append(fname)
+
+                # Report recursive delete partial failures if any
+                QApplication.restoreOverrideCursor()
+                if failed_folders or failed_images:
+                    QMessageBox.warning(
+                        self,
+                        "Partial Failures During Deletion",
+                        f"Failed to delete some items:\n"
+                        f"Folders: {', '.join(failed_folders) if failed_folders else 'None'}\n"
+                        f"Images: {', '.join(failed_images) if failed_images else 'None'}"
+                    )
+
+                # Navigate back if current folder was deleted
+                if self._current_view == "folder" and self._current_folder_id in folder_ids:
+                    self._folder_nav_history = [(fid, name) for fid, name in self._folder_nav_history if fid not in folder_ids]
+                    self._on_nav_back()
                 else:
                     self._restore_current_view()
-        else:
-            QMessageBox.warning(self, "Error", "Failed to delete folder")
+        except Exception as e:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, "Exception Occurred", f"An error occurred during folder deletion: {str(e)}")
+        finally:
+            while QApplication.overrideCursor() is not None:
+                QApplication.restoreOverrideCursor()
 
     def _on_rename_folder(self, folder_id: int, current_name: str):
         new_name, ok = QInputDialog.getText(
@@ -3582,21 +4183,233 @@ class DashboardWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._reposition_trash_drop_zone()
+        self._reposition_floating_widgets()
+        if hasattr(self, "drag_drop_overlay") and self.drag_drop_overlay:
+            self.drag_drop_overlay.setGeometry(self.rect())
+        if hasattr(self, "_current_toast") and self._current_toast:
+            self._current_toast.reposition()
+
+    def _check_drag_data(self, mime_data) -> tuple:
+        has_valid_images = False
+        has_folders = False
+        has_unsupported = False
+        
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                path = url.toLocalFile()
+                if os.path.isdir(path):
+                    has_folders = True
+                elif path.lower().endswith(SUPPORTED_IMAGE_EXTENSIONS):
+                    has_valid_images = True
+                else:
+                    has_unsupported = True
+        return has_valid_images, has_folders, has_unsupported
+
+    def dragEnterEvent(self, event):
+        has_valid, has_folders, has_unsupported = self._check_drag_data(event.mimeData())
+        if has_valid or has_folders or has_unsupported:
+            event.acceptProposedAction()
+            if hasattr(self, "drag_drop_overlay") and self.drag_drop_overlay:
+                self.drag_drop_overlay.setGeometry(self.rect())
+                self.drag_drop_overlay.set_drag_state(has_valid, has_folders, has_unsupported)
+                self.drag_drop_overlay.show()
+                self.drag_drop_overlay.raise_()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def _handle_file_drop(self, mime_data):
+        valid_files = []
+        folder_count = 0
+        unsupported_count = 0
+        
+        if mime_data.hasUrls():
+            for url in mime_data.urls():
+                path = url.toLocalFile()
+                if os.path.isdir(path):
+                    folder_count += 1
+                elif path.lower().endswith(SUPPORTED_IMAGE_EXTENSIONS):
+                    if os.path.isfile(path):
+                        valid_files.append(path)
+                else:
+                    unsupported_count += 1
+                    
+        if valid_files:
+            self.upload_requested.emit(valid_files)
+            
+        if folder_count > 0 or unsupported_count > 0:
+            msg_parts = []
+            if len(valid_files) > 0:
+                msg_parts.append(f"{len(valid_files)} image(s) were added to the queue.")
+            if folder_count > 0:
+                msg_parts.append(f"{folder_count} folder(s) were ignored (folders are not supported).")
+            if unsupported_count > 0:
+                msg_parts.append(f"{unsupported_count} unsupported file(s) were ignored.")
+                
+            QMessageBox.warning(
+                self,
+                "Upload Warning",
+                "\n".join(msg_parts)
+            )
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._reposition_trash_drop_zone()
+        self._reposition_floating_widgets()
 
-    def _reposition_trash_drop_zone(self):
+    def _reposition_floating_widgets(self):
+        margin_right = 24
+        margin_bottom = 24
+        
+        # Trash Drop Zone dimensions for math (decoupled layout)
+        trash_w = 64
+        trash_h = 64
+        trash_x = self.width() - trash_w - margin_right
+        trash_y = self.height() - trash_h - margin_bottom
+        
         if hasattr(self, "trash_drop_zone") and self.trash_drop_zone is not None:
-            margin_right = 24
-            margin_bottom = 24
-            trash_w = self.trash_drop_zone.width()
-            trash_h = self.trash_drop_zone.height()
-            new_x = self.width() - trash_w - margin_right
-            new_y = self.height() - trash_h - margin_bottom
-            self.trash_drop_zone.move(new_x, new_y)
+            self.trash_drop_zone.move(trash_x, trash_y)
+            
+        # Back to Top Button placed horizontally to the left of the trash zone
+        btn_w = 36
+        btn_h = 36
+        btn_x = trash_x - btn_w - 10
+        btn_y = trash_y + (trash_h - btn_h) // 6 + 2
+        
+        if hasattr(self, "back_to_top_btn") and self.back_to_top_btn is not None:
+            self.back_to_top_btn.move(btn_x, btn_y)
+
+    def _apply_back_to_top_style(self):
+        if not hasattr(self, "back_to_top_btn") or self.back_to_top_btn is None:
+            return
+        c = theme.c
+        self.back_to_top_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c['surface_alt']};
+                color: {c['text']};
+                border: 1px solid {c['border']};
+                border-radius: 18px;
+                font-size: 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {c['primary_subtle']};
+                color: {c['primary_dark'] if theme.is_dark else c['primary']};
+                border-color: {c['primary']};
+            }}
+        """)
+
+    def _scroll_to_top(self):
+        from PyQt5.QtCore import QVariantAnimation
+        scrollbar = self.scroll.verticalScrollBar()
+        self._scroll_animation = QVariantAnimation(self)
+        self._scroll_animation.setStartValue(scrollbar.value())
+        self._scroll_animation.setEndValue(0)
+        self._scroll_animation.setDuration(400) # 400ms smooth scroll
+        self._scroll_animation.valueChanged.connect(scrollbar.setValue)
+        self._scroll_animation.start()
+
+    def _toggle_folders(self, expanded):
+        self._folders_expanded = expanded
+        if hasattr(self, "_folders_container") and self._folders_container:
+            self._folders_container.setVisible(expanded)
+
+    def _toggle_images(self, expanded):
+        self._images_expanded = expanded
+        if hasattr(self, "_images_container") and self._images_container:
+            self._images_container.setVisible(expanded)
+        if expanded:
+            self._check_and_fill_viewport()
+
+    def _on_scroll_value_changed(self, value):
+        # 1. Toggle Back to Top button based on scroll depth
+        if hasattr(self, "back_to_top_btn") and self.back_to_top_btn is not None:
+            if value > 600:
+                if self.back_to_top_btn.isHidden():
+                    self.back_to_top_btn.show()
+                    self.back_to_top_btn.raise_()
+            else:
+                if not self.back_to_top_btn.isHidden():
+                    self.back_to_top_btn.hide()
+
+        # 2. Check prefetching condition for infinite scroll
+        if not getattr(self, "_images_expanded", True):
+            return
+        if not hasattr(self, "all_images") or not hasattr(self, "_loaded_images_count"):
+            return
+        if getattr(self, "_scroll_loading", False):
+            return
+        if self._loaded_images_count >= len(self.all_images):
+            return
+        if getattr(self, "_image_grid_widget", None) is None:
+            return
+
+        scrollbar = self.scroll.verticalScrollBar()
+        remaining = scrollbar.maximum() - value
+        if remaining < 400: # Prefetch threshold (400px remaining scroll)
+            self._load_next_page_batch()
+
+    def _check_and_fill_viewport(self):
+        if not getattr(self, "_images_expanded", True):
+            return
+        if not hasattr(self, "all_images") or not hasattr(self, "_loaded_images_count"):
+            return
+        if getattr(self, "_scroll_loading", False):
+            return
+        if self._loaded_images_count >= len(self.all_images):
+            return
+        if getattr(self, "_image_grid_widget", None) is None:
+            return
+
+        scrollbar = self.scroll.verticalScrollBar()
+        if scrollbar.maximum() == 0:
+            # Viewport not filled, trigger next load immediately
+            self._load_next_page_batch()
+
+    def _load_next_page_batch(self):
+        # 1. Set loading flag immediately to prevent duplicate triggers
+        self._scroll_loading = True
+        
+        # 2. Show the progress bar loader
+        if hasattr(self, "_scroll_loading_widget") and self._scroll_loading_widget:
+            self._scroll_loading_widget.show()
+            
+        # 3. Defer the heavy rendering work to allow Qt to paint the loader
+        QTimer.singleShot(0, self._render_next_page_batch)
+
+    def _render_next_page_batch(self):
+        # Double check sanity conditions
+        if not hasattr(self, "all_images") or not hasattr(self, "_loaded_images_count") or getattr(self, "_image_grid_widget", None) is None:
+            self._scroll_loading = False
+            if hasattr(self, "_scroll_loading_widget") and self._scroll_loading_widget:
+                self._scroll_loading_widget.hide()
+            return
+
+        next_batch = self.all_images[self._loaded_images_count : self._loaded_images_count + 20]
+        if next_batch:
+            layout = self._image_grid_widget.layout()
+            if layout:
+                for image in next_batch:
+                    card = ImageCard(image)
+                    card.clicked.connect(self._on_image_clicked)
+                    card.delete_requested.connect(self._on_delete_image)
+                    card.rename_requested.connect(self._on_rename_image)
+                    card.move_requested.connect(self._on_move_image)
+                    layout.addWidget(card)
+                    self._image_cards[image["id"]] = card
+
+        self._loaded_images_count += len(next_batch)
+        self._scroll_loading = False
+        
+        if hasattr(self, "_scroll_loading_widget") and self._scroll_loading_widget:
+            self._scroll_loading_widget.hide()
+
+        # Check if another batch is needed to fill the viewport recursively (using 50ms single-shot timer for layout calculations)
+        QTimer.singleShot(50, self._check_and_fill_viewport)
 
     def _toggle_queue_drawer(self):
         """Toggle queue sidebar visibility."""
@@ -3624,6 +4437,15 @@ class DashboardWindow(QWidget):
         # Update badge count
         self._update_queue_badge()
 
+    def show_toast(self, message: str, type: str = "info"):
+        if hasattr(self, "_current_toast") and self._current_toast:
+            try:
+                self._current_toast.deleteLater()
+            except (RuntimeError, TypeError):
+                pass
+        self._current_toast = ToastNotification(self, message, type)
+        self._current_toast.show()
+
     def update_queue_item_ui(self, item_id: str, status: str, progress: int = 0, error_msg: str = ""):
         """Update the status of an existing item in the queue drawer."""
         if not hasattr(self, "_queue_widgets") or item_id not in self._queue_widgets:
@@ -3635,22 +4457,28 @@ class DashboardWindow(QWidget):
         # Update badge count
         self._update_queue_badge()
 
-    def _clear_completed_queue(self):
-        """Remove completed, failed, or cancelled tasks from the queue list view."""
-        if not hasattr(self, "_queue_widgets"):
+        # If terminal state, schedule removal after a short delay (1.5 seconds)
+        if status in ("completed", "failed", "cancelled"):
+            filename = widget.name_lbl._full_text if hasattr(widget, "name_lbl") else "Image"
+            if status == "completed":
+                self.show_toast(f"Translation completed for {filename}!", type="success")
+            elif status == "failed":
+                self.show_toast(f"Translation failed for {filename}: {error_msg}", type="error")
+            elif status == "cancelled":
+                self.show_toast(f"Translation cancelled for {filename}.", type="info")
+
+            # Schedule removal
+            QTimer.singleShot(1500, lambda: self._remove_queue_item(item_id))
+
+    def _remove_queue_item(self, item_id: str):
+        """Remove a queue item widget from the UI and safely clean it up."""
+        if not hasattr(self, "_queue_widgets") or item_id not in self._queue_widgets:
             return
-            
-        to_remove = []
-        for item_id, widget in list(self._queue_widgets.items()):
-            if widget.status in ("completed", "failed", "cancelled"):
-                to_remove.append(item_id)
-                
-        for item_id in to_remove:
-            widget = self._queue_widgets.pop(item_id)
-            if hasattr(self, "q_list_layout"):
-                self.q_list_layout.removeWidget(widget)
-            widget.deleteLater()
-            
+        widget = self._queue_widgets.pop(item_id)
+        if hasattr(self, "q_list_layout") and self.q_list_layout:
+            self.q_list_layout.removeWidget(widget)
+        widget.deleteLater()
+        
         # Show empty label if list is empty
         if not self._queue_widgets and hasattr(self, "q_empty_label"):
             self.q_empty_label.show()

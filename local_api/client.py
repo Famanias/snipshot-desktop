@@ -16,6 +16,8 @@ from config import LOCAL_TRANSLATOR_URL, DEFAULT_TRANSLATION_CONFIG
 from . import database as db
 from . import storage
 
+_UNSET = object()
+
 
 class LocalAPIClient:
     """API client that stores everything locally (SQLite + filesystem)."""
@@ -67,12 +69,12 @@ class LocalAPIClient:
         finally:
             conn.close()
 
-    def create_folder(self, name: str, description: str = "") -> Dict[str, Any]:
+    def create_folder(self, name: str, description: str = "", parent_folder_id: int = None) -> Dict[str, Any]:
         conn = db.get_connection()
         try:
             cur = conn.execute(
-                "INSERT INTO folders (name, description) VALUES (?, ?)",
-                (name, description),
+                "INSERT INTO folders (name, description, parent_folder_id) VALUES (?, ?, ?)",
+                (name, description, parent_folder_id),
             )
             conn.commit()
             row = conn.execute(
@@ -100,7 +102,7 @@ class LocalAPIClient:
             conn.close()
 
     def update_folder(
-        self, folder_id: int, name: str = None, description: str = None
+        self, folder_id: int, name: str = None, description: str = None, parent_folder_id: Any = _UNSET
     ) -> Dict[str, Any]:
         conn = db.get_connection()
         try:
@@ -112,6 +114,9 @@ class LocalAPIClient:
             if description is not None:
                 updates.append("description = ?")
                 params.append(description)
+            if parent_folder_id is not _UNSET:
+                updates.append("parent_folder_id = ?")
+                params.append(parent_folder_id)
             if not updates:
                 return {"success": True, "data": {}}
             params.append(folder_id)

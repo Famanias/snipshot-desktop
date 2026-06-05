@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (
     QInputDialog, QMessageBox, QSizePolicy, QListWidget,
     QListWidgetItem, QStackedWidget, QProgressBar, QDialog,
     QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox,
-    QLayout, QSplitter, QSpinBox, QDoubleSpinBox, QSlider,
+    QLayout, QSplitter, QSpinBox, QDoubleSpinBox, QSlider, QToolButton,
 )
 from typing import Optional
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread, QRect, QPoint
@@ -1081,8 +1081,8 @@ class TrashDropZone(QFrame):
         apply_card_shadow(self)
 
         # Reposition parent if parent is DashboardWindow
-        if hasattr(self.parent(), "_reposition_trash_drop_zone"):
-            self.parent()._reposition_trash_drop_zone()
+        if hasattr(self.parent(), "_reposition_floating_widgets"):
+            self.parent()._reposition_floating_widgets()
 
     def _on_theme_changed(self, _mode=None):
         self._apply_style()
@@ -1239,6 +1239,76 @@ class DragDropOverlay(QWidget):
         self.hide()
         self.parent()._handle_file_drop(event.mimeData())
         event.acceptProposedAction()
+
+
+class SectionHeader(QWidget):
+    toggled = pyqtSignal(bool)  # Emits True if expanded, False if collapsed
+
+    def __init__(self, text: str, is_expanded: bool = True, parent=None):
+        super().__init__(parent)
+        self.text = text
+        self.is_expanded = is_expanded
+        self._setup_ui()
+        theme.theme_changed.connect(self._apply_style)
+
+    def _setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE["xs"])
+        layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        # Arrow toggle button
+        self.arrow_btn = QToolButton()
+        self.arrow_btn.setCursor(Qt.PointingHandCursor)
+        self.arrow_btn.clicked.connect(self.toggle)
+
+        # Flat button for the text label
+        self.text_btn = QPushButton(self.text)
+        self.text_btn.setCursor(Qt.PointingHandCursor)
+        self.text_btn.clicked.connect(self.toggle)
+
+        layout.addWidget(self.arrow_btn)
+        layout.addWidget(self.text_btn)
+
+        self._apply_style()
+
+    def _apply_style(self):
+        c = theme.c
+        arrow_char = "▼" if self.is_expanded else "▶"
+        self.arrow_btn.setText(arrow_char)
+        
+        self.arrow_btn.setStyleSheet(f"""
+            QToolButton {{
+                color: {c['text_secondary']};
+                font-size: 11px;
+                font-weight: bold;
+                background-color: transparent;
+                border: none;
+                padding: 0;
+            }}
+            QToolButton:hover {{
+                color: {c['primary']};
+            }}
+        """)
+        self.text_btn.setStyleSheet(f"""
+            QPushButton {{
+                font-size: 12px;
+                font-weight: 700;
+                color: {c['text_secondary']};
+                background-color: transparent;
+                text-transform: uppercase;
+                border: none;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                color: {c['primary']};
+            }}
+        """)
+
+    def toggle(self):
+        self.is_expanded = not self.is_expanded
+        self._apply_style()
+        self.toggled.emit(self.is_expanded)
 
 
 class ToastNotification(QWidget):
@@ -1589,6 +1659,11 @@ class DashboardWindow(QWidget):
         self.folder_grid_layout = None
         self._image_grid_widget = None
         self._queue_widgets = {}
+
+        self._folders_expanded = True
+        self._images_expanded = True
+        self._folders_container = None
+        self._images_container = None
 
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
@@ -2406,6 +2481,10 @@ class DashboardWindow(QWidget):
         self.folder_grid = None
         self.folder_grid_layout = None
         self._image_grid_widget = None
+        self._folders_expanded = True
+        self._images_expanded = True
+        self._folders_container = None
+        self._images_container = None
 
     def _load_all_files_async(self):
         self._start_cache_load()
@@ -2486,16 +2565,15 @@ class DashboardWindow(QWidget):
         unfiled_images = [img for img in images if img.get("folder_id") is None]
 
         if folders:
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['primary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel("Folders")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent; text-transform: uppercase;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+            header = SectionHeader("Folders", self._folders_expanded, self)
+            header.toggled.connect(self._toggle_folders)
+            self.content_layout.addWidget(header)
+
+            self._folders_container = QWidget()
+            self._folders_container.setStyleSheet("background-color: transparent;")
+            folders_container_layout = QVBoxLayout(self._folders_container)
+            folders_container_layout.setContentsMargins(0, 0, 0, 0)
+            folders_container_layout.setSpacing(0)
 
             self.folder_grid = QWidget()
             self.folder_grid.setStyleSheet("background-color: transparent;")
@@ -2513,23 +2591,26 @@ class DashboardWindow(QWidget):
                 self.folder_grid_layout.addWidget(card)
                 self._folder_cards[folder["id"]] = card
 
-            self.content_layout.addWidget(self.folder_grid)
+            folders_container_layout.addWidget(self.folder_grid)
+            self.content_layout.addWidget(self._folders_container)
+            self._folders_container.setVisible(self._folders_expanded)
 
         if unfiled_images:
             self.content_layout.addSpacing(SPACE["md"])
 
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['text_secondary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel("Unfiled Images")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent; text-transform: uppercase;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+            header = SectionHeader("Unfiled Images", self._images_expanded, self)
+            header.toggled.connect(self._toggle_images)
+            self.content_layout.addWidget(header)
+
+            self._images_container = QWidget()
+            self._images_container.setStyleSheet("background-color: transparent;")
+            images_container_layout = QVBoxLayout(self._images_container)
+            images_container_layout.setContentsMargins(0, 0, 0, 0)
+            images_container_layout.setSpacing(0)
 
             self._add_image_grid(unfiled_images)
+            self.content_layout.addWidget(self._images_container)
+            self._images_container.setVisible(self._images_expanded)
 
         if not folders and not unfiled_images:
             self._show_empty_state(
@@ -2565,16 +2646,15 @@ class DashboardWindow(QWidget):
         folder_images = [img for img in self._cached_images if img.get("folder_id") == folder_id]
 
         if subfolders:
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['primary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel("Subfolders")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent; text-transform: uppercase;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+            header = SectionHeader("Subfolders", self._folders_expanded, self)
+            header.toggled.connect(self._toggle_folders)
+            self.content_layout.addWidget(header)
+
+            self._folders_container = QWidget()
+            self._folders_container.setStyleSheet("background-color: transparent;")
+            folders_container_layout = QVBoxLayout(self._folders_container)
+            folders_container_layout.setContentsMargins(0, 0, 0, 0)
+            folders_container_layout.setSpacing(0)
 
             self.folder_grid = QWidget()
             self.folder_grid.setStyleSheet("background-color: transparent;")
@@ -2592,22 +2672,28 @@ class DashboardWindow(QWidget):
                 self.folder_grid_layout.addWidget(card)
                 self._folder_cards[folder["id"]] = card
 
-            self.content_layout.addWidget(self.folder_grid)
+            folders_container_layout.addWidget(self.folder_grid)
+            self.content_layout.addWidget(self._folders_container)
+            self._folders_container.setVisible(self._folders_expanded)
             self.content_layout.addSpacing(SPACE["md"])
 
         if folder_images:
             if subfolders:
-                header_row = QHBoxLayout()
-                header_row.setSpacing(SPACE["xs"])
-                dot = QLabel("•")
-                dot.setStyleSheet(f"color: {c['text_secondary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-                lbl = QLabel("Images")
-                lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent; text-transform: uppercase;")
-                header_row.addWidget(dot)
-                header_row.addWidget(lbl)
-                header_row.addStretch()
-                self.content_layout.addLayout(header_row)
+                header = SectionHeader("Images", self._images_expanded, self)
+                header.toggled.connect(self._toggle_images)
+                self.content_layout.addWidget(header)
+
+                self._images_container = QWidget()
+                self._images_container.setStyleSheet("background-color: transparent;")
+                images_container_layout = QVBoxLayout(self._images_container)
+                images_container_layout.setContentsMargins(0, 0, 0, 0)
+                images_container_layout.setSpacing(0)
+
             self._add_image_grid(folder_images)
+            
+            if subfolders:
+                self.content_layout.addWidget(self._images_container)
+                self._images_container.setVisible(self._images_expanded)
         elif not subfolders:
             self._show_empty_state(
                 "This folder is empty",
@@ -2695,7 +2781,13 @@ class DashboardWindow(QWidget):
             card.move_requested.connect(self._on_move_image)
             grid_layout.addWidget(card)
             self._image_cards[image["id"]] = card
-        self.content_layout.addWidget(self._image_grid_widget)
+
+        # Determine target layout (uses images container if defined, otherwise defaults to content layout)
+        target_layout = self.content_layout
+        if hasattr(self, "_images_container") and self._images_container is not None and self._images_container.layout() is not None:
+            target_layout = self._images_container.layout()
+
+        target_layout.addWidget(self._image_grid_widget)
 
         # Create loading progress bar for infinite scroll prefetching
         self._scroll_loading_widget = QProgressBar()
@@ -2716,7 +2808,7 @@ class DashboardWindow(QWidget):
             }}
         """)
         self._scroll_loading_widget.hide()
-        self.content_layout.addWidget(self._scroll_loading_widget)
+        target_layout.addWidget(self._scroll_loading_widget)
 
         # Trigger viewport check to load more images automatically if screen height permits
         self._check_and_fill_viewport()
@@ -2858,43 +2950,50 @@ class DashboardWindow(QWidget):
         query = self.search_input.text()
 
         if folders:
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['primary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel(f"Folders Matching \"{query}\"")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+            header = SectionHeader(f"Folders Matching \"{query}\"", self._folders_expanded, self)
+            header.toggled.connect(self._toggle_folders)
+            self.content_layout.addWidget(header)
 
-            folder_grid = QWidget()
-            folder_grid_layout = FlowLayout(folder_grid, spacing=SPACE["md"])
+            self._folders_container = QWidget()
+            self._folders_container.setStyleSheet("background-color: transparent;")
+            folders_container_layout = QVBoxLayout(self._folders_container)
+            folders_container_layout.setContentsMargins(0, 0, 0, 0)
+            folders_container_layout.setSpacing(0)
+
+            self.folder_grid = QWidget()
+            self.folder_grid.setStyleSheet("background-color: transparent;")
+            self.folder_grid_layout = FlowLayout(self.folder_grid, spacing=SPACE["md"])
             for folder in folders:
                 card = FolderCard(folder)
                 card.clicked.connect(self._on_folder_clicked)
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
                 card.image_dropped.connect(self._on_image_dropped)
-                folder_grid_layout.addWidget(card)
-            self.content_layout.addWidget(folder_grid)
+                self.folder_grid_layout.addWidget(card)
+
+            folders_container_layout.addWidget(self.folder_grid)
+            self.content_layout.addWidget(self._folders_container)
+            self._folders_container.setVisible(self._folders_expanded)
 
         if images:
             if folders:
                 self.content_layout.addSpacing(SPACE["lg"])
-            header_row = QHBoxLayout()
-            header_row.setSpacing(SPACE["xs"])
-            dot = QLabel("•")
-            dot.setStyleSheet(f"color: {c['primary']}; font-size: 20px; font-weight: bold; background-color: transparent;")
-            lbl = QLabel(f"Images Matching \"{query}\"")
-            lbl.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {c['text_secondary']}; background-color: transparent;")
-            header_row.addWidget(dot)
-            header_row.addWidget(lbl)
-            header_row.addStretch()
-            self.content_layout.addLayout(header_row)
+                
+                header = SectionHeader(f"Images Matching \"{query}\"", self._images_expanded, self)
+                header.toggled.connect(self._toggle_images)
+                self.content_layout.addWidget(header)
+
+                self._images_container = QWidget()
+                self._images_container.setStyleSheet("background-color: transparent;")
+                images_container_layout = QVBoxLayout(self._images_container)
+                images_container_layout.setContentsMargins(0, 0, 0, 0)
+                images_container_layout.setSpacing(0)
 
             self._add_image_grid(images)
+            
+            if folders:
+                self.content_layout.addWidget(self._images_container)
+                self._images_container.setVisible(self._images_expanded)
 
         if not folders and not images:
             self._show_empty_state(
@@ -4175,11 +4274,11 @@ class DashboardWindow(QWidget):
         if hasattr(self, "trash_drop_zone") and self.trash_drop_zone is not None:
             self.trash_drop_zone.move(trash_x, trash_y)
             
-        # Back to Top Button centered 12px above the trash zone bounds
+        # Back to Top Button placed horizontally to the left of the trash zone
         btn_w = 36
         btn_h = 36
-        btn_x = trash_x + (trash_w - btn_w) // 2
-        btn_y = trash_y - btn_h - 12
+        btn_x = trash_x - btn_w - 10
+        btn_y = trash_y + (trash_h - btn_h) // 6 + 2
         
         if hasattr(self, "back_to_top_btn") and self.back_to_top_btn is not None:
             self.back_to_top_btn.move(btn_x, btn_y)
@@ -4214,6 +4313,18 @@ class DashboardWindow(QWidget):
         self._scroll_animation.valueChanged.connect(scrollbar.setValue)
         self._scroll_animation.start()
 
+    def _toggle_folders(self, expanded):
+        self._folders_expanded = expanded
+        if hasattr(self, "_folders_container") and self._folders_container:
+            self._folders_container.setVisible(expanded)
+
+    def _toggle_images(self, expanded):
+        self._images_expanded = expanded
+        if hasattr(self, "_images_container") and self._images_container:
+            self._images_container.setVisible(expanded)
+        if expanded:
+            self._check_and_fill_viewport()
+
     def _on_scroll_value_changed(self, value):
         # 1. Toggle Back to Top button based on scroll depth
         if hasattr(self, "back_to_top_btn") and self.back_to_top_btn is not None:
@@ -4226,6 +4337,8 @@ class DashboardWindow(QWidget):
                     self.back_to_top_btn.hide()
 
         # 2. Check prefetching condition for infinite scroll
+        if not getattr(self, "_images_expanded", True):
+            return
         if not hasattr(self, "all_images") or not hasattr(self, "_loaded_images_count"):
             return
         if getattr(self, "_scroll_loading", False):
@@ -4241,6 +4354,8 @@ class DashboardWindow(QWidget):
             self._load_next_page_batch()
 
     def _check_and_fill_viewport(self):
+        if not getattr(self, "_images_expanded", True):
+            return
         if not hasattr(self, "all_images") or not hasattr(self, "_loaded_images_count"):
             return
         if getattr(self, "_scroll_loading", False):

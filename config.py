@@ -11,12 +11,9 @@ import os
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://lsccpfjohkqfkrcxyybf.supabase.co/")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxzY2NwZmpvaGtxZmtyY3h5eWJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjgyNzIxMTksImV4cCI6MjA4Mzg0ODExOX0.SKgsQ_tJyhqtlXjeE6WRyTr2Pv37Vi_KT3pA-78ne8c")
 
-# ⚠️  NEVER add SUPABASE_SERVICE_KEY to a desktop app.
-# Service keys bypass Row Level Security entirely and must only be used
-# server-side.  If you see it here, remove it immediately.
+#   NEVER add SUPABASE_SERVICE_KEY to a desktop app.
 
 # API Endpoints
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000/api")
 TRANSLATOR_URL = os.getenv("TRANSLATOR_URL", "https://snipshot-snipshot-backend.hf.space")
 LOCAL_TRANSLATOR_URL = "http://localhost:8001"
 
@@ -31,7 +28,7 @@ LOCAL_STORAGE_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), 
 
 # App Settings
 APP_NAME = "SnipShot"
-APP_VERSION = "2.0.2"
+APP_VERSION = "2.0.3"
 
 # Default translation config — mirrors test.py test_local_translate defaults
 DEFAULT_TRANSLATION_CONFIG = {

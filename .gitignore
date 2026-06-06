@@ -78,7 +78,6 @@ PACKAGING_PLAN.md
 
 installer/**
 installer/
-installer1.iss
 installer.iss
 installer.iss
 LICENSE.rtf

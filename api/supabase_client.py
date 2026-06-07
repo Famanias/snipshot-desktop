@@ -154,6 +154,17 @@ class SupabaseAPIClient:
             self.user = None
         return self._ok()
 
+    def reset_password_for_email(self, email: str) -> dict:
+        """Send a password reset email."""
+        try:
+            self.client.auth.reset_password_for_email(
+                email,
+                options={"redirect_to": "https://snipshot.space/reset-password"}
+            )
+            return self._ok()
+        except Exception as e:
+            return self._err(e)
+
     def get_profile(self) -> dict:
         """Return the currently authenticated user object."""
         try:

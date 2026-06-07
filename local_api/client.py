@@ -45,6 +45,9 @@ class LocalAPIClient:
     def logout(self):
         pass
 
+    def reset_password_for_email(self, email: str) -> Dict[str, Any]:
+        return {"success": False, "error": "Password reset is not supported in local offline mode."}
+
     def get_profile(self) -> Dict[str, Any]:
         return {"success": True, "data": {"email": "Local User", "id": "local"}}
 

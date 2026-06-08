@@ -310,8 +310,14 @@ class MainWindow(QMainWindow):
         # Create screens
         self._create_screens()
         
-        # Start at login with the same auth-screen sizing used after sign out
-        self._show_login()
+        # Start at login or dashboard depending on auth status
+        from utils.settings_manager import settings_manager
+        if api_client.is_authenticated and api_client.user:
+            settings_manager.load_user_profile(api_client.user.id)
+            self._show_dashboard()
+        else:
+            settings_manager.load_offline_profile()
+            self._show_login()
         
         # Capture widget (created on demand)
         self.capture_widget = None
@@ -325,9 +331,7 @@ class MainWindow(QMainWindow):
         self.active_worker = None
         self._queue_snip_counter = 0
         
-        from PyQt5.QtCore import QSettings
-        settings = QSettings("SnipShot", "SnipShot")
-        self._snip_interval_ms = settings.value("continuous_snip_interval", DEFAULT_CONTINUOUS_SNIP_INTERVAL, type=int)
+        self._snip_interval_ms = settings_manager.get_setting("continuous_snip_interval", DEFAULT_CONTINUOUS_SNIP_INTERVAL)
 
         self._snip_local_shortcut = None
         self._continuous_local_shortcut = None
@@ -389,6 +393,9 @@ class MainWindow(QMainWindow):
     def _on_login_success(self):
         """Handle successful login"""
         self.login_screen.clear_fields()
+        from utils.settings_manager import settings_manager
+        if api_client.user:
+            settings_manager.load_user_profile(api_client.user.id)
         self._show_dashboard()
     
     def _on_register_success(self):
@@ -434,6 +441,8 @@ class MainWindow(QMainWindow):
         from local_api import LocalAPIClient
         self._local_client = LocalAPIClient(translator_url=LOCAL_TRANSLATOR_URL)
         api_client.set_impl(self._local_client)
+        from utils.settings_manager import settings_manager
+        settings_manager.load_offline_profile()
         self.login_screen.clear_fields()
         self._show_dashboard()
 
@@ -542,6 +551,8 @@ class MainWindow(QMainWindow):
     def _on_logout(self):
         """Handle logout"""
         api_client.reset()
+        from utils.settings_manager import settings_manager
+        settings_manager.load_offline_profile()
         self._show_login()
         if hasattr(self, "continuous_hud") and self.continuous_hud is not None:
             self.continuous_hud.hide()
@@ -816,6 +827,10 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
+    
+    # Initialize settings manager profiles
+    from utils.settings_manager import settings_manager
+    settings_manager.load_offline_profile()
     
     # Set application style
     app.setStyleSheet(get_main_stylesheet())

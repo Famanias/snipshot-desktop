@@ -377,6 +377,14 @@ class LocalAPIClient:
         finally:
             conn.close()
 
+    # ==================== Settings Persistence (no-ops in local mode) ====================
+
+    def get_user_settings(self) -> Dict[str, Any]:
+        return {"success": True, "data": None}
+
+    def update_user_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        return {"success": True, "data": {}}
+
     # ==================== Translation ====================
 
     def translate_image(

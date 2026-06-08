@@ -1619,21 +1619,20 @@ class DashboardWindow(QWidget):
         self.current_folder_id = None
         self.current_folder_name = None
         self.active_nav = "all"
-        self.target_language = TRANSLATION_TARGET_LANG
-        self.snip_shortcut_key = DEFAULT_SHORTCUT_KEY
+        
+        from utils.settings_manager import settings_manager
+        self.target_language = settings_manager.get_setting("target_language", TRANSLATION_TARGET_LANG)
+        self.snip_shortcut_key = settings_manager.get_setting("snip_shortcut_key", DEFAULT_SHORTCUT_KEY)
         self.continuous_mode_enabled = False
-        self.continuous_shortcut_key = DEFAULT_CONTINUOUS_SHORTCUT_KEY
+        self.continuous_shortcut_key = settings_manager.get_setting("continuous_shortcut_key", DEFAULT_CONTINUOUS_SHORTCUT_KEY)
+        self.continuous_snip_interval = settings_manager.get_setting("continuous_snip_interval", DEFAULT_CONTINUOUS_SNIP_INTERVAL)
         
-        from PyQt5.QtCore import QSettings
-        settings = QSettings("SnipShot", "SnipShot")
-        self.continuous_snip_interval = settings.value(
-            "continuous_snip_interval", DEFAULT_CONTINUOUS_SNIP_INTERVAL, type=int
-        )
+        self.detection_size = settings_manager.get_setting("detection_size", 1536)
+        self.box_threshold = settings_manager.get_setting("box_threshold", 0.7)
+        self.inpainting_size = settings_manager.get_setting("inpainting_size", 2048)
+        self.inpainter = settings_manager.get_setting("inpainter", TRANSLATION_INPAINTER)
         
-        self.detection_size = 1536
-        self.box_threshold = 0.7
-        self.inpainting_size = 2048
-        self.inpainter = TRANSLATION_INPAINTER
+        settings_manager.profile_changed.connect(self._on_settings_profile_changed)
         self.language_options = [
             ("English", "ENG"),
             ("Japanese", "JPN"),
@@ -3552,17 +3551,23 @@ class DashboardWindow(QWidget):
         selected = self.language_combo.currentData()
         if selected:
             self.target_language = selected
+            from utils.settings_manager import settings_manager
+            settings_manager.set_setting("target_language", selected)
 
     def _on_shortcut_captured(self, key: int):
         self.snip_shortcut_key = key
         if hasattr(self, "shortcut_display"):
             self.shortcut_display.setText(self._key_name(key))
+        from utils.settings_manager import settings_manager
+        settings_manager.set_setting("snip_shortcut_key", key)
         self.shortcut_changed.emit(key)
 
     def _on_continuous_shortcut_captured(self, key: int):
         self.continuous_shortcut_key = key
         if hasattr(self, "continuous_shortcut_display"):
             self.continuous_shortcut_display.setText(self._key_name(key))
+        from utils.settings_manager import settings_manager
+        settings_manager.set_setting("continuous_shortcut_key", key)
         self.continuous_shortcut_changed.emit(key)
 
     def _set_continuous_mode(self, enabled: bool):
@@ -3593,9 +3598,8 @@ class DashboardWindow(QWidget):
         self.interval_input.setText(str(val))
         self.continuous_snip_interval = val
         
-        from PyQt5.QtCore import QSettings
-        settings = QSettings("SnipShot", "SnipShot")
-        settings.setValue("continuous_snip_interval", val)
+        from utils.settings_manager import settings_manager
+        settings_manager.set_setting("continuous_snip_interval", val)
         
         self.snip_interval_changed.emit(val)
         
@@ -3619,6 +3623,8 @@ class DashboardWindow(QWidget):
         self.detection_size = self.detection_size_slider.value()
         self.det_save_btn.hide()
         self.det_cancel_btn.hide()
+        from utils.settings_manager import settings_manager
+        settings_manager.set_setting("detection_size", self.detection_size)
 
     def _cancel_detection_size(self):
         self.detection_size_slider.setValue(self.detection_size)
@@ -3638,6 +3644,8 @@ class DashboardWindow(QWidget):
         self.box_threshold = round(self.box_threshold_slider.value() / 100, 2)
         self.box_save_btn.hide()
         self.box_cancel_btn.hide()
+        from utils.settings_manager import settings_manager
+        settings_manager.set_setting("box_threshold", self.box_threshold)
 
     def _cancel_box_threshold(self):
         self.box_threshold_slider.setValue(int(self.box_threshold * 100))
@@ -3657,6 +3665,8 @@ class DashboardWindow(QWidget):
         self.inpainting_size = self.inpainting_size_slider.value()
         self.inp_save_btn.hide()
         self.inp_cancel_btn.hide()
+        from utils.settings_manager import settings_manager
+        settings_manager.set_setting("inpainting_size", self.inpainting_size)
 
     def _cancel_inpainting_size(self):
         self.inpainting_size_slider.setValue(self.inpainting_size)
@@ -3664,6 +3674,29 @@ class DashboardWindow(QWidget):
     def _on_inpainter_changed(self):
         if hasattr(self, "inpainter_combo"):
             self.inpainter = self.inpainter_combo.currentData()
+            from utils.settings_manager import settings_manager
+            settings_manager.set_setting("inpainter", self.inpainter)
+
+    def _on_settings_profile_changed(self):
+        """Update dashboard attributes from settings manager and refresh settings UI."""
+        from utils.settings_manager import settings_manager
+        self.continuous_snip_interval = settings_manager.get_setting("continuous_snip_interval", 500)
+        self.target_language = settings_manager.get_setting("target_language", "ENG")
+        self.snip_shortcut_key = settings_manager.get_setting("snip_shortcut_key", 16777225)
+        self.continuous_shortcut_key = settings_manager.get_setting("continuous_shortcut_key", 16777240)
+        self.detection_size = settings_manager.get_setting("detection_size", 1536)
+        self.box_threshold = settings_manager.get_setting("box_threshold", 0.7)
+        self.inpainting_size = settings_manager.get_setting("inpainting_size", 2048)
+        self.inpainter = settings_manager.get_setting("inpainter", "lama_large")
+
+        # Emit updates for listeners
+        self.shortcut_changed.emit(self.snip_shortcut_key)
+        self.continuous_shortcut_changed.emit(self.continuous_shortcut_key)
+        self.snip_interval_changed.emit(self.continuous_snip_interval)
+
+        # Re-render settings if Settings tab is active
+        if getattr(self, "_current_view", None) == "settings":
+            self._render_settings_content()
 
     # ── Public getters ─────────────────────────────────────────────────
     def get_target_language(self) -> str:

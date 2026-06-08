@@ -626,6 +626,46 @@ class SupabaseAPIClient:
             return self._err(e)
 
     # ------------------------------------------------------------------
+    # User Settings Persistence
+    # ------------------------------------------------------------------
+
+    def get_user_settings(self) -> dict:
+        """Fetch the authenticated user's settings from Supabase.
+        
+        Returns the row data if it exists, otherwise success with None.
+        """
+        try:
+            if not self.user:
+                return self._err("User not authenticated")
+            res = (
+                self.client.table("user_settings")
+                .select("*")
+                .eq("user_id", self.user.id)
+                .execute()
+            )
+            return self._ok(res.data[0] if res.data else None)
+        except Exception as e:
+            return self._err(e)
+
+    def update_user_settings(self, updates: dict) -> dict:
+        """Upsert the authenticated user's settings to Supabase."""
+        try:
+            if not self.user:
+                return self._err("User not authenticated")
+            
+            insert_data = dict(updates)
+            insert_data["user_id"] = self.user.id
+            
+            res = (
+                self.client.table("user_settings")
+                .upsert(insert_data)
+                .execute()
+            )
+            return self._ok(res.data[0] if res.data else None)
+        except Exception as e:
+            return self._err(e)
+
+    # ------------------------------------------------------------------
     # Translation (delegated to TranslatorClient)
     # ------------------------------------------------------------------
 

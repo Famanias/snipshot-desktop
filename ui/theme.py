@@ -90,34 +90,40 @@ class ThemeManager(QObject):
         return cls._instance
 
     def __init__(self):
-        if ThemeManager._is_initialized:
+        pass
+
+    def ensure_initialized(self):
+        if getattr(self, "_is_initialized", False):
             return
         super().__init__()
-        ThemeManager._is_initialized = True
-        self._mode = self._load_preference()
+        self._is_initialized = True
+        from utils.settings_manager import settings_manager
+        settings_manager.setting_changed.connect(self._on_setting_changed)
+        settings_manager.profile_changed.connect(self._on_profile_changed)
 
     @property
     def mode(self) -> str:
-        return self._mode
+        self.ensure_initialized()
+        from utils.settings_manager import settings_manager
+        return settings_manager.get_setting("theme", "light")
 
     @property
     def c(self) -> dict:
         """Current colour palette."""
-        return self.DARK if self._mode == "dark" else self.LIGHT
+        return self.DARK if self.mode == "dark" else self.LIGHT
 
     @property
     def is_dark(self) -> bool:
-        return self._mode == "dark"
+        return self.mode == "dark"
 
     def set_mode(self, mode: str):
-        if mode not in ("light", "dark") or mode == self._mode:
+        if mode not in ("light", "dark") or mode == self.mode:
             return
-        self._mode = mode
-        self._save_preference()
-        self.theme_changed.emit(mode)
+        from utils.settings_manager import settings_manager
+        settings_manager.set_setting("theme", mode)
 
     def toggle(self):
-        self.set_mode("dark" if self._mode == "light" else "light")
+        self.set_mode("dark" if self.mode == "light" else "light")
 
     def rgba(self, key: str, alpha: float) -> str:
         """Convert a hex palette colour to an rgba() CSS string."""
@@ -125,26 +131,12 @@ class ThemeManager(QObject):
         r, g, b = int(hex_color[:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
         return f"rgba({r}, {g}, {b}, {alpha})"
 
-    # ── Persistence ────────────────────────────────────────────────────
-    def _config_path(self):
-        appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
-        d = os.path.join(appdata, "SnipShot")
-        os.makedirs(d, exist_ok=True)
-        return os.path.join(d, "theme.json")
+    def _on_setting_changed(self, key: str, val: Any):
+        if key == "theme":
+            self.theme_changed.emit(val)
 
-    def _load_preference(self) -> str:
-        try:
-            with open(self._config_path()) as f:
-                return json.load(f).get("mode", "light")
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return "light"
-
-    def _save_preference(self):
-        try:
-            with open(self._config_path(), "w") as f:
-                json.dump({"mode": self._mode}, f)
-        except OSError:
-            pass
+    def _on_profile_changed(self):
+        self.theme_changed.emit(self.mode)
 
 
 # Module-level singleton

@@ -29,30 +29,116 @@ LOCAL_STORAGE_DIR = os.path.join(os.getenv("APPDATA", os.path.expanduser("~")), 
 
 # App Settings
 APP_NAME = "SnipShot"
-APP_VERSION = "2.0.3"
+APP_VERSION = "2.0.6"
 
 # Default translation config — mirrors test.py test_local_translate defaults
 DEFAULT_TRANSLATION_CONFIG = {
     "detector": {
         "detection_size": 1536,
         "box_threshold": 0.7,
+        "text_threshold": 0.5,
+        "unclip_ratio": 2.3,
+        "det_rotate": False,
+        "det_auto_rotate": False,
+        "det_invert": False,
+        "det_gamma_correct": False,
     },
-    "translator": {"target_lang": TRANSLATION_TARGET_LANG},
-    "inpainter": {"inpainter": TRANSLATION_INPAINTER, "inpainting_size": 2048},
+    "translator": {
+        "target_lang": TRANSLATION_TARGET_LANG,
+    },
+    "inpainter": {
+        "inpainter": TRANSLATION_INPAINTER,
+        "inpainting_size": 2048,
+        "inpainting_precision": "bf16",
+    },
+    "ocr": {
+        "min_text_length": 0,
+        "ignore_bubble": 0,
+        "prob": None,
+    },
+    "render": {
+        "font_size": None,
+        "font_size_minimum": -1,
+        "font_size_offset": 0,
+        "line_spacing": None,
+        "disable_font_border": False,
+        "alignment": "auto",
+        "direction": "auto",
+        "uppercase": False,
+        "lowercase": False,
+        "no_hyphenation": False,
+        "font_color": None,
+    },
+    "kernel_size": 3,
+    "mask_dilation_offset": 30,
 }
 
-# Translation parameter bounds (used by Settings UI)
+# Translation parameter bounds / options (used by Settings UI)
 DETECTION_SIZE_MIN = 512
 DETECTION_SIZE_MAX = 3072
 DETECTION_SIZE_STEP = 64
+
 BOX_THRESHOLD_MIN = 0.1
 BOX_THRESHOLD_MAX = 1.0
+BOX_THRESHOLD_STEP = 0.05
+
+TEXT_THRESHOLD_MIN = 0.1
+TEXT_THRESHOLD_MAX = 1.0
+TEXT_THRESHOLD_STEP = 0.05
+
+UNCLIP_RATIO_MIN = 1.0
+UNCLIP_RATIO_MAX = 5.0
+UNCLIP_RATIO_STEP = 0.1
+
 INPAINTING_SIZE_MIN = 512
 INPAINTING_SIZE_MAX = 4096
 INPAINTING_SIZE_STEP = 256
+
+INPAINTING_PRECISION_OPTIONS = ["bf16", "fp16", "fp32"]
+
+MASK_DILATION_OFFSET_MIN = 0
+MASK_DILATION_OFFSET_MAX = 100
+MASK_DILATION_OFFSET_STEP = 1
+
+KERNEL_SIZE_MIN = 1
+KERNEL_SIZE_MAX = 31
+KERNEL_SIZE_STEP = 2  # Must be odd
+
+MIN_TEXT_LENGTH_MIN = 0
+MIN_TEXT_LENGTH_MAX = 100
+MIN_TEXT_LENGTH_STEP = 1
+
+IGNORE_BUBBLE_MIN = 0
+IGNORE_BUBBLE_MAX = 50
+IGNORE_BUBBLE_STEP = 1
+
+PROB_MIN = 0.0
+PROB_MAX = 1.0
+PROB_STEP = 0.05
+
+FONT_SIZE_MIN = 1
+FONT_SIZE_MAX = 200
+FONT_SIZE_STEP = 1
+
+FONT_SIZE_MINIMUM_MIN = -1
+FONT_SIZE_MINIMUM_MAX = 100
+FONT_SIZE_MINIMUM_STEP = 1
+
+FONT_SIZE_OFFSET_MIN = -50
+FONT_SIZE_OFFSET_MAX = 50
+FONT_SIZE_OFFSET_STEP = 1
+
+LINE_SPACING_MIN = 0.0
+LINE_SPACING_MAX = 2.0
+LINE_SPACING_STEP = 0.05
+
+ALIGNMENT_OPTIONS = ["auto", "left", "center", "right"]
+DIRECTION_OPTIONS = ["auto", "horizontal", "vertical"]
+INPAINTER_OPTIONS = ["lama_large", "none"]
 
 # Shortcut key (default: Print Screen)
 DEFAULT_SHORTCUT_KEY = 0x01000009  # Qt.Key_Print (Print Screen)
 DEFAULT_CONTINUOUS_SHORTCUT_KEY = 0x01000038  # Qt.Key_F9
 DEFAULT_CONTINUOUS_SNIP_INTERVAL = 500  # Default delay of 500ms between continuous snips
+
 

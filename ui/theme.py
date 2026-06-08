@@ -30,7 +30,7 @@ class ThemeManager(QObject):
         "primary_dark":    "#0284C7",
         "primary_light":   "#E0F2FE",
         "primary_subtle":  "#F0F9FF",
-        "text":            "#1A1A1A",
+        "text":            "#1e1e1e",
         "text_secondary":  "#4A4A4A",
         "text_tertiary":   "#7A7A7A",
         "hover":           "#F0F0F0",
@@ -131,7 +131,7 @@ class ThemeManager(QObject):
         r, g, b = int(hex_color[:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
         return f"rgba({r}, {g}, {b}, {alpha})"
 
-    def _on_setting_changed(self, key: str, val: Any):
+    def _on_setting_changed(self, key: str, val):
         if key == "theme":
             self.theme_changed.emit(val)
 

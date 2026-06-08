@@ -274,18 +274,26 @@ def get_main_stylesheet() -> str:
     /* ============== Menu ============== */
     QMenu {{
         background-color: {c['surface']};
+        color: {c['text']};
         border: 1px solid {c['border']};
-        border-radius: {SPACE['xs']}px;
-        padding: {SPACE['sm']}px 0;
+        padding: 4px 0px;
     }}
 
     QMenu::item {{
+        background-color: transparent;
         padding: {SPACE['sm']}px {SPACE['xl']}px;
         color: {c['text']};
     }}
 
     QMenu::item:selected {{
         background-color: {c['hover']};
+        color: {c['text']};
+    }}
+
+    QMenu::separator {{
+        height: 1px;
+        background-color: {c['border']};
+        margin: 4px 0px;
     }}
 
     /* ============== Progress Bar ============== */

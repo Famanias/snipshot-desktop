@@ -738,6 +738,8 @@ class FolderCard(QFrame):
 
     def _show_context_menu(self, pos):
         menu = QMenu(self)
+        from ui.styles import get_main_stylesheet
+        menu.setStyleSheet(get_main_stylesheet())
         open_action = menu.addAction("Open")
         open_action.triggered.connect(
             lambda: self.clicked.emit(self.folder_id, self.folder_name)
@@ -930,6 +932,8 @@ class ImageCard(QFrame):
 
     def _show_context_menu(self, pos):
         menu = QMenu(self)
+        from ui.styles import get_main_stylesheet
+        menu.setStyleSheet(get_main_stylesheet())
         open_action = menu.addAction("View")
         open_action.triggered.connect(lambda: self.clicked.emit(self.image_id))
         rename_action = menu.addAction("Rename")

@@ -34,6 +34,7 @@ APP_VERSION = "2.0.6"
 # Default translation config — mirrors test.py test_local_translate defaults
 DEFAULT_TRANSLATION_CONFIG = {
     "detector": {
+        "detector": "default",
         "detection_size": 1536,
         "box_threshold": 0.7,
         "text_threshold": 0.5,
@@ -44,7 +45,9 @@ DEFAULT_TRANSLATION_CONFIG = {
         "det_gamma_correct": False,
     },
     "translator": {
+        # "translator": "groq",
         "target_lang": TRANSLATION_TARGET_LANG,
+        "no_text_lang_skip": False,
     },
     "inpainter": {
         "inpainter": TRANSLATION_INPAINTER,
@@ -52,11 +55,13 @@ DEFAULT_TRANSLATION_CONFIG = {
         "inpainting_precision": "bf16",
     },
     "ocr": {
+        "ocr": "48px",
         "min_text_length": 0,
         "ignore_bubble": 0,
         "prob": None,
     },
     "render": {
+        "renderer": "default",
         "font_size": None,
         "font_size_minimum": -1,
         "font_size_offset": 0,
@@ -68,6 +73,7 @@ DEFAULT_TRANSLATION_CONFIG = {
         "lowercase": False,
         "no_hyphenation": False,
         "font_color": None,
+        "rtl": True,
     },
     "kernel_size": 3,
     "mask_dilation_offset": 30,
@@ -93,8 +99,6 @@ UNCLIP_RATIO_STEP = 0.1
 INPAINTING_SIZE_MIN = 512
 INPAINTING_SIZE_MAX = 4096
 INPAINTING_SIZE_STEP = 256
-
-INPAINTING_PRECISION_OPTIONS = ["bf16", "fp16", "fp32"]
 
 MASK_DILATION_OFFSET_MIN = 0
 MASK_DILATION_OFFSET_MAX = 100
@@ -132,13 +136,16 @@ LINE_SPACING_MIN = 0.0
 LINE_SPACING_MAX = 2.0
 LINE_SPACING_STEP = 0.05
 
+DETECTOR_OPTIONS = ["default"]
+# TRANSLATOR_OPTIONS = ["groq"]
+INPAINTER_OPTIONS = ["lama_large", "none"]
+OCR_OPTIONS = ["48px"]
+RENDERER_OPTIONS = ["default", "manga2eng", "none"]
+INPAINTING_PRECISION_OPTIONS = ["bf16", "fp16", "fp32"]
 ALIGNMENT_OPTIONS = ["auto", "left", "center", "right"]
 DIRECTION_OPTIONS = ["auto", "horizontal", "vertical"]
-INPAINTER_OPTIONS = ["lama_large", "none"]
 
 # Shortcut key (default: Print Screen)
 DEFAULT_SHORTCUT_KEY = 0x01000009  # Qt.Key_Print (Print Screen)
 DEFAULT_CONTINUOUS_SHORTCUT_KEY = 0x01000038  # Qt.Key_F9
 DEFAULT_CONTINUOUS_SNIP_INTERVAL = 500  # Default delay of 500ms between continuous snips
-
-

@@ -1,170 +1,843 @@
-# Implementation Plan - Local Cache and Optimistic UI Updates
+# Implementation Plan - Expose Advanced Configuration Parameters in Settings UI (Revised)
 
-This plan details the implementation of an in-memory local cache state manager and targeted UI updates in the PyQt5 dashboard. This removes unnecessary full library reloads (displaying blocking "Loading..." screens) after basic CRUD operations, making the application feel instantaneous and responsive.
+We will expand the Settings UI panel of the SnipShot Desktop application to expose configuration parameters through a **two-tier system**: Basic Settings (always visible) and Advanced Settings (collapsible). We will introduce a centralized settings metadata system, input validation, and reset functionality.
 
-## User Review Required
+## Architecture Principles
 
-> [!NOTE]
-> All basic CRUD operations (Create Folder, Rename Folder, Delete Folder, Rename Image, Delete Image, Move Image) will now modify the in-memory lists `self._cached_folders` and `self._cached_images` directly and update the visible UI widgets in-place (patching).
-> 
-> A full library reload (with the loading screen) will be reserved only for:
-> 1. Initial application startup / Login.
-> 2. Swapping client implementations (Local Mode toggle).
-> 3. Manual refresh operations (if triggered).
+### 1. Single Source of Truth: `SETTINGS_METADATA`
+- **`SETTINGS_METADATA`** is authoritative for all setting definitions (ranges, constraints, labels, tooltips, defaults)
+- **`DEFAULT_SETTINGS`** is derived from metadata to prevent drift
+- No duplication of default values
+- Metadata drives all UI creation and validation
 
-## Key Design Principles & Safety Measures
+### 2. Scalable Settings Storage
+- Dashboard does **not** load individual setting attributes (`self.text_threshold`, `self.kernel_size`, etc.)
+- Instead, use `self.settings_manager.get(key)` on-demand
+- Adding new settings requires only metadata entry, not attribute initialization
+- Cleaner, more maintainable codebase as setting count grows
 
-### 1. Targeted Widget Patching (No "Performance Trap")
-Instead of clearing and rebuilding the entire dashboard via `self._restore_current_view()` for minor changes, we will:
-- Track active widgets in dictionaries: `self._folder_cards = {}` (folder_id -> Card) and `self._image_cards = {}` (image_id -> Card).
-- Update widget labels directly on rename.
-- Remove widgets directly from their layout on delete.
-- Insert folder widgets directly into the layout on create.
-- Fall back to `_restore_current_view()` only for layout-level reflows (e.g. transitioning to or from empty states).
+### 3. Validation Before Storage
+- Invalid values are **prevented** at the UI control level (spinbox constraints, enum dropdowns, odd-only steps)
+- Validation on save ensures invalid values never enter QSettings
+- By translation time, all settings are guaranteed valid
+- No surprise validation failures during translation
 
-### 2. PyQt Layout & Memory Safety
-To prevent spacing glitches and memory leaks from orphaned widgets in PyQt layouts:
-- When removing a card widget, we will explicitly disconnect its signals, call `widget.setParent(None)`, and call `widget.deleteLater()`.
-- Card deletion/removal will strictly follow this order:
-  1. API operation success check.
-  2. Mutate cache (`self._cached_images` / `self._cached_folders`).
-  3. Remove widget from the layout.
-  4. Dispose of the widget (`setParent(None)` and `deleteLater()`).
-  5. Remove reference from the mapping dictionary (`self._image_cards` / `self._folder_cards`).
-
-### 3. Transaction Safety (Sync API First)
-To avoid UI desynchronization on API failures, all operations will run synchronously on the client:
-1. Trigger API operation.
-2. Await API success.
-3. If successful, modify the local caches (`self._cached_folders`, `self._cached_images`) and update/patch the PyQt UI widgets.
-4. If failed, display the error dialog and leave both the cache and UI completely untouched (precluding the need for complex state rollback).
-
-### 4. Folder Count Reconciliation
-Instead of fragile incremental math (`+1` / `-1`), we will implement a centralized `_reconcile_folder_counts(self)` method. Whenever images are added, removed, or moved, this helper will:
-- Recompute the counts of all folders directly from the `self._cached_images` list.
-- Update the `image_count` property of folders in `self._cached_folders` and update the count label of active folder cards directly.
-
-### 5. Cache Resolution by ID
-To prevent widget-level reference copies from becoming stale:
-- `ImageCard` signals (`clicked`, `delete_requested`, `rename_requested`, `move_requested`) will be updated to emit `image_id: int` instead of full dictionaries.
-- `DashboardWindow` will retrieve the active dictionary from the cache by ID using a helper: `_get_cached_image(self, image_id: int) -> Optional[dict]`.
+### 4. Section Constants
+- Section names (e.g., `"Detection Configuration"`) are defined as module-level constants
+- Prevents brittle string duplication and copy-paste errors
+- Refactoring is safe and traceable
 
 ---
 
-## Architectural UI Patch Primitives
+## Architecture Overview
 
-To keep PyQt view layout manipulation modular, standardized, and clean, we will implement the following UI patch primitives:
+### Two-Tier Settings System
 
-- `_add_folder_card_widget(self, folder: dict)`:
-  - Instantiates `FolderCard(folder)`, connects event handlers, adds it to `self.folder_grid_layout` (inserted at index 0), and registers it in `self._folder_cards`.
-- `_remove_folder_card_widget(self, folder_id: int)`:
-  - Resolves widget from `self._folder_cards`. If found, removes it from the layout, calls `widget.setParent(None)`, `widget.deleteLater()`, and deletes the reference in `self._folder_cards`.
-- `_add_image_card_widget(self, image: dict)`:
-  - Instantiates `ImageCard(image)`, connects event handlers, inserts it at index 0 of `self._image_grid_widget.layout()`, and registers it in `self._image_cards`.
-- `_remove_image_card_widget(self, image_id: int)`:
-  - Resolves widget from `self._image_cards`. If found, removes it from `self._image_grid_widget.layout()`, calls `widget.setParent(None)`, `widget.deleteLater()`, and deletes the reference in `self._image_cards`.
+#### Basic Settings (Always Visible)
+~10 essential controls for everyday users:
+- **Language** (dropdown)
+- **Theme** (segmented toggle)
+- **Capture Shortcuts** (hotkey buttons)
+- **Continuous Snipping** (toggle + interval control)
+- **Inpainter Model** (dropdown)
+- **Font Size** (slider/spinbox with "Auto" toggle)
+- **Line Spacing** (slider/spinbox with "Auto" toggle)
+- **Alignment** (dropdown)
+- **Text Case** (radio buttons: Normal / UPPERCASE / lowercase)
+
+#### Advanced Settings (Collapsible)
+Behind **[ Show Advanced Settings ]** button for power users:
+- **Detection Configuration:** Detector Model, Detection Size, Box Threshold, Text Threshold, Unclip Ratio, Detect Rotation, Auto Rotation, Invert Image, No Text Language Skip, Gamma Correction
+- **Inpainting Configuration:** Inpainting Precision, Kernel Size, Mask Dilation Offset
+- **OCR & Extraction:** OCR Model, Minimum Text Length, Ignore Bubble, Probability Threshold (with toggle), No Text Language Skip
+- **Rendering & Layout:** Renderer, Font Size Minimum, Font Size Offset, Disable Font Border, Direction, No Hyphenation, RTL Rendering
 
 ---
 
-## Architectural & Integration Contracts
+## Phase 1: Settings Metadata & Validation Infrastructure
 
-### Contract 1: Strict Event Pipeline Ordering
-All CRUD operations (moves, renames, deletes) must strictly adhere to the following sequence of execution:
-```
-1. Trigger API Operation (Wait for Response)
-       ↓
-2. Validate Success Status
-       ↓
-3. Mutate Local Cache (self._cached_images / self._cached_folders)
-       ↓
-4. Patch PyQt Widgets (using UI Patch Primitives)
-       ↓
-5. Reconcile Folder Counts (trigger _reconcile_folder_counts)
+### [CREATE] `config_metadata.py` (or add to `config.py`)
+
+Define centralized metadata for all settings. This is the **single source of truth** for all setting definitions.
+
+**Key Principle:** `SETTINGS_METADATA` is authoritative. `DEFAULT_SETTINGS` is derived from it:
+
+```python
+SETTINGS_METADATA = {
+    "language": { ... },
+    "theme": { ... },
+    # ... all settings ...
+}
+
+# Derive defaults automatically to prevent drift
+DEFAULT_SETTINGS = {
+    key: metadata["default"]
+    for key, metadata in SETTINGS_METADATA.items()
+}
 ```
 
-### Contract 2: Signal Migration Safety
-To prevent "half-migrated UI" bugs and PyQt signature mismatch crashes:
-- When changing `ImageCard` signals to emit `image_id: int`, all corresponding connect statements in `DashboardWindow` (`_on_image_clicked`, `_on_delete_image`, `_on_rename_image`, `_on_move_image`) must be updated to accept the `image_id (int)` parameter and resolve the image dictionary from the cache via `self._get_cached_image(image_id)`.
+**Structure:** Each setting has:
 
-### Future Architectural Evolution Notes
-- **Supabase Latency**: If network latency spikes, the synchronous API block may freeze the UI. If this becomes a problem, we will upgrade to asynchronous background threads with immediate optimistic UI updates and revert-on-failure rollback handlers.
-- **Scale Optimization**: If the user's library grows large (e.g. 10k+ images), running `O(N)` reconciliation on every operation may cause lag. In that case, we will transition to deferred reconciliation (e.g., using a short QTimer debounce) or maintain incremental counters.
-- **View Abstraction**: To prevent view matrix rules from expanding uncontrollably, we will eventually abstract views into filter classes (e.g., `view.filter(image) -> bool`).
-- **Framework Separation**: If logic becomes scattered, we will refactor to separate the UI layer from the state store (e.g., `DashboardStore`, `DashboardActions`, and `DashboardRenderer`).
+```python
+SETTINGS_METADATA = {
+    # Basic Settings
+    "language": {
+        "label": "Language",
+        "type": "string",
+        "default": "English",
+        "options": ["English", "Spanish", "French", "..."],
+        "tooltip": "UI and output language"
+    },
+    "theme": {
+        "label": "Theme",
+        "type": "string",
+        "default": "light",
+        "options": ["light", "dark"],
+        "tooltip": "Application theme"
+    },
+    
+    # Advanced Settings - Numeric with Ranges
+    "text_threshold": {
+        "label": "Text Threshold",
+        "type": "float",
+        "default": 0.5,
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.01,
+        "constraint": "range",
+        "tooltip": "Confidence threshold for text detection"
+    },
+    "unclip_ratio": {
+        "label": "Unclip Ratio",
+        "type": "float",
+        "default": 2.3,
+        "min": 1.0,
+        "max": 4.0,
+        "step": 0.1,
+        "constraint": "range",
+        "tooltip": "Expands detected text boundaries"
+    },
+    "kernel_size": {
+        "label": "Kernel Size",
+        "type": "int",
+        "default": 3,
+        "min": 1,
+        "max": 7,
+        "step": 1,
+        "constraint": "odd_only",
+        "tooltip": "Morphological kernel (must be odd: 1, 3, 5, 7)"
+    },
+    "line_spacing": {
+        "label": "Line Spacing",
+        "type": "float",
+        "default": 1.0,
+        "min": 0.5,
+        "max": 2.0,
+        "step": 0.1,
+        "constraint": "positive",
+        "tooltip": "Multiplier for line spacing"
+    },
+    "font_size": {
+        "label": "Font Size",
+        "type": "int",
+        "default": 24,
+        "min": 8,
+        "max": 128,
+        "step": 1,
+        "constraint": "positive",
+        "tooltip": "Default font size for rendering"
+    },
+    "font_size_minimum": {
+        "label": "Minimum Font Size",
+        "type": "int",
+        "default": -1,
+        "min": -1,
+        "max": 128,
+        "step": 1,
+        "constraint": "lte_font_size",
+        "tooltip": "-1 = no minimum; otherwise must be ≤ Font Size"
+    },
+    "font_size_offset": {
+        "label": "Font Size Offset",
+        "type": "int",
+        "default": 0,
+        "min": -50,
+        "max": 50,
+        "step": 1,
+        "constraint": "range",
+        "tooltip": "Adjustment to calculated font size"
+    },
+    "mask_dilation_offset": {
+        "label": "Mask Dilation Offset",
+        "type": "int",
+        "default": 30,
+        "min": 0,
+        "max": 100,
+        "step": 5,
+        "constraint": "non_negative",
+        "tooltip": "Pixels to dilate inpainting mask"
+    },
+    "min_text_length": {
+        "label": "Minimum Text Length",
+        "type": "int",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 1,
+        "constraint": "non_negative",
+        "tooltip": "Ignore text shorter than this length"
+    },
+    "ignore_bubble": {
+        "label": "Ignore Bubble Threshold",
+        "type": "int",
+        "default": 0,
+        "min": 0,
+        "max": 1000,
+        "step": 10,
+        "constraint": "non_negative",
+        "tooltip": "Ignore small regions (pixels²)"
+    },
+    "prob": {
+        "label": "Probability Threshold",
+        "type": "float",
+        "default": 0.5,
+        "min": 0.0,
+        "max": 1.0,
+        "step": 0.05,
+        "constraint": "range",
+        "tooltip": "Probability cutoff (requires 'use_prob' enabled)"
+    },
+    
+    # Dropdown/Options Settings
+    "detector": {
+        "label": "Detector Model",
+        "type": "string",
+        "default": "default",
+        "options": ["default", "craft", "ctpn"],
+        "constraint": "enum",
+        "tooltip": "Text detection model"
+    },
+    "inpainting_precision": {
+        "label": "Inpainting Precision",
+        "type": "string",
+        "default": "bf16",
+        "options": ["fp32", "fp16", "bf16"],
+        "constraint": "enum",
+        "tooltip": "Floating point precision for inpainting"
+    },
+    "ocr": {
+        "label": "OCR Model Size",
+        "type": "string",
+        "default": "48px",
+        "options": ["32px", "48px", "64px"],
+        "constraint": "enum",
+        "tooltip": "OCR model resolution"
+    },
+    "renderer": {
+        "label": "Renderer",
+        "type": "string",
+        "default": "default",
+        "options": ["default", "advanced"],
+        "constraint": "enum",
+        "tooltip": "Text rendering engine"
+    },
+    "alignment": {
+        "label": "Alignment",
+        "type": "string",
+        "default": "auto",
+        "options": ["auto", "left", "center", "right", "justify"],
+        "constraint": "enum",
+        "tooltip": "Text alignment strategy"
+    },
+    "direction": {
+        "label": "Text Direction",
+        "type": "string",
+        "default": "auto",
+        "options": ["auto", "ltr", "rtl"],
+        "constraint": "enum",
+        "tooltip": "Text direction (left-to-right, right-to-left)"
+    },
+    
+    # Text Case (Mutually Exclusive)
+    "text_case": {
+        "label": "Text Case",
+        "type": "string",
+        "default": "normal",
+        "options": ["normal", "uppercase", "lowercase"],
+        "constraint": "enum_exclusive",
+        "tooltip": "Apply case transformation to output text"
+    },
+    
+    # Boolean Settings
+    "det_rotate": {
+        "label": "Detect Rotation",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Enable text rotation detection"
+    },
+    "det_auto_rotate": {
+        "label": "Auto Rotation",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Automatically rotate detected regions"
+    },
+    "det_invert": {
+        "label": "Invert Image",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Invert image colors for detection"
+    },
+    "det_gamma_correct": {
+        "label": "Gamma Correction",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Apply gamma correction to image"
+    },
+    "no_text_lang_skip": {
+        "label": "No Text Language Skip",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Skip language-specific text filtering"
+    },
+    "use_prob": {
+        "label": "Use Probability Threshold",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Enable probability-based filtering"
+    },
+    "use_font_size": {
+        "label": "Use Custom Font Size",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Override default font size calculation"
+    },
+    "use_line_spacing": {
+        "label": "Use Custom Line Spacing",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Override default line spacing"
+    },
+    "disable_font_border": {
+        "label": "Disable Font Border",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Remove border from rendered text"
+    },
+    "no_hyphenation": {
+        "label": "No Hyphenation",
+        "type": "bool",
+        "default": False,
+        "constraint": "boolean",
+        "tooltip": "Disable word hyphenation"
+    },
+    "rtl": {
+        "label": "RTL Rendering",
+        "type": "bool",
+        "default": True,
+        "constraint": "boolean",
+        "tooltip": "Enable right-to-left text rendering"
+    },
+}
+```
+
+### [MODIFY] `settings_manager.py`
+
+Add validation and reset methods:
+
+#### Section Name Constants (NEW)
+```python
+# Prevent string literal brittleness
+SECTION_DETECTION = "Detection Configuration"
+SECTION_INPAINTING = "Inpainting Configuration"
+SECTION_OCR = "OCR & Extraction"
+SECTION_RENDERING = "Rendering & Layout"
+
+SECTION_SETTINGS_MAP = {
+    SECTION_DETECTION: ["detector", "text_threshold", "unclip_ratio", "det_rotate", ...],
+    SECTION_INPAINTING: ["inpainting_precision", "kernel_size", "mask_dilation_offset", ...],
+    SECTION_OCR: ["ocr", "min_text_length", "ignore_bubble", "use_prob", "prob", ...],
+    SECTION_RENDERING: ["renderer", "font_size_minimum", "font_size_offset", ...],
+}
+```
+
+#### New Methods:
+- `validate_setting(key: str, value: Any) -> Tuple[bool, Optional[str]]`
+  - Checks type, range, and constraints defined in `SETTINGS_METADATA`
+  - Returns `(is_valid, error_message)` tuple
+  - Handles constraints: `range`, `odd_only`, `positive`, `non_negative`, `lte_font_size`, `enum`, `boolean`
+
+- `set_validated(key: str, value: Any) -> Tuple[bool, Optional[str]]`
+  - **NEW:** Validates before saving
+  - Only persists if valid
+  - Returns success/error tuple
+  - Prevents invalid values from entering QSettings
+
+- `reset_all_settings() -> None`
+  - Resets all settings to defaults (from `DEFAULT_SETTINGS`, which derives from metadata)
+  - Syncs to Supabase if online
+
+- `reset_section(section_name: str) -> None`
+  - Resets only settings within a section (using `SECTION_SETTINGS_MAP`)
+  - Maps section name to setting key groups
+  - Safer than string literals
+
+#### Validation Example:
+```python
+def validate_setting(self, key: str, value) -> tuple:
+    metadata = SETTINGS_METADATA.get(key)
+    if not metadata:
+        return True, None  # Unknown key: allow (backward compat)
+    
+    constraint = metadata.get("constraint")
+    
+    if constraint == "range":
+        min_val, max_val = metadata.get("min"), metadata.get("max")
+        if not (min_val <= value <= max_val):
+            return False, f"Must be between {min_val} and {max_val}"
+    
+    if constraint == "odd_only":
+        if int(value) % 2 == 0:
+            return False, f"Must be odd (1, 3, 5, 7)"
+    
+    if constraint == "lte_font_size":
+        font_size = self.get("font_size")
+        if value > font_size and value != -1:
+            return False, f"Must be ≤ Font Size ({font_size}) or -1"
+    
+    if constraint == "positive":
+        if value <= 0:
+            return False, "Must be positive (> 0)"
+    
+    if constraint == "non_negative":
+        if value < 0:
+            return False, "Must be non-negative (≥ 0)"
+    
+    if constraint == "enum":
+        options = metadata.get("options", [])
+        if value not in options:
+            return False, f"Must be one of: {', '.join(options)}"
+    
+    return True, None
+
+def set_validated(self, key: str, value) -> tuple:
+    """Save setting only if validation passes."""
+    is_valid, error_msg = self.validate_setting(key, value)
+    if not is_valid:
+        return False, error_msg
+    
+    # Safe to persist
+    self.set(key, value)
+    return True, None
+```
 
 ---
 
-## Active View Patching Matrix
+## Phase 2: Settings UI Restructuring (dashboard.py)
 
-The UI update actions for image cards depend on the currently active view:
+### [MODIFY] `dashboard.py`
 
-| Action / Operation | Active View is: **All Files (Root)** | Active View is: **Folder View (Folder A)** | Active View is: **Recent View** |
-| :--- | :--- | :--- | :--- |
-| **New Image Created** | Call `_add_image_card_widget` if `folder_id` is None. | Call `_add_image_card_widget` if image `folder_id == Folder A`. | Call `_add_image_card_widget`. |
-| **Delete Image** | Call `_remove_image_card_widget` (if it was unfiled). | Call `_remove_image_card_widget`. | Call `_remove_image_card_widget`. |
-| **Move to Folder B** | Call `_remove_image_card_widget` (if moving from unfiled). Update counts on Folder B card. | Call `_remove_image_card_widget` (since it left Folder A). | Update counts on Folder B card. |
-| **Move from Folder B** | Call `_add_image_card_widget` (if moving to unfiled). Update counts on Folder B card. | Call `_add_image_card_widget` if moving to Folder A. Update counts on Folder B card. | Update counts on Folder B card. |
+#### Part A: Initialization & Properties
+
+**Design Decision:** Instead of loading each setting into individual attributes (which creates maintenance overhead with 30+ settings), use `settings_manager.get(key)` on-demand.
+
+```python
+def __init__(self, ...):
+    # ... existing code ...
+    
+    self.settings_manager = settings_manager  # Store reference
+    self.advanced_settings_visible = False     # Only track UI state
+```
+
+**Benefits:**
+- New settings require no attribute initialization
+- Serialization/reset logic stays metadata-driven
+- Single source of truth in `settings_manager`
+
+When you need a setting value, call:
+```python
+value = self.settings_manager.get("kernel_size")
+```
+
+or bind directly from metadata:
+```python
+metadata = SETTINGS_METADATA.get("kernel_size")
+current_value = self.settings_manager.get("kernel_size")
+```
+
+#### Part B: New UI Creation Methods
+
+- `_create_numeric_control(key: str) -> QWidget`
+  - Reads metadata (min, max, step, label, tooltip)
+  - Creates paired QSlider + QDoubleSpinBox/QSpinBox
+  - Bidirectional sync: slider ↔ spinbox
+  - Floating-point scaling for slider (multiply by 100)
+  - Optional "Auto" checkbox (handled via `use_*` settings)
+
+- `_create_boolean_control(key: str) -> QCheckBox`
+  - Reads metadata label, tooltip
+  - Returns styled checkbox with signal connection
+
+- `_create_options_control(key: str) -> QComboBox`
+  - Reads metadata options, label, tooltip
+  - Returns populated dropdown
+
+- `_create_radio_control(key: str, options: List[str]) -> QGroupBox`
+  - **NEW:** For mutually exclusive options (e.g., text_case)
+  - Returns QGroupBox with QRadioButton children
+  - Only one option selectable at a time
+
+#### Part C: Settings Content Rendering
+
+Rewrite `_render_settings_content(self)` to split into two sections:
+
+**Section 1: BASIC SETTINGS** (Always Visible)
+```
+┌─ Language [dropdown] ─────────────────────────────┐
+├─ Theme [Light][Dark] ─────────────────────────────┤
+├─ Capture Shortcuts [Btn] [Btn] [Btn] ─────────────┤
+├─ Continuous Snipping [Toggle] Interval: [input] ──┤
+├─ Detection Size [Slider ──●────] [SpinBox] ───────┤
+├─ Inpainter Model [dropdown] ──────────────────────┤
+├─ Font Size [Slider ──●────] [SpinBox] with [Auto]─┤
+├─ Line Spacing [Slider ──●────] [SpinBox] [Auto] ──┤
+├─ Alignment [dropdown] ────────────────────────────┤
+└─────────────────────────────────────────────────────┘
+```
+
+**Section 2: ADVANCED SETTINGS** (Collapsible)
+```
+┌─────────────────────────────────────────────────────┐
+│ [▼ Show Advanced Settings] or [▶ Hide Advanced] ─────│
+└─────────────────────────────────────────────────────┘
+(visible only when toggled on)
+
+┌─ Detection Configuration 🔍 [Reset 🔄] ──────────┐
+├─ Detector Model [dropdown] ───────────────────────┤
+├─ Detection Size [Slider] [SpinBox] ──────────────┤
+├─ Box Threshold [Slider] [SpinBox] ───────────────┤
+├─ Text Threshold [Slider] [SpinBox] ──────────────┤
+├─ Unclip Ratio [Slider] [SpinBox] ────────────────┤
+├─ Detect Rotation [✓] Auto Rotation [✓] ─────────┤
+├─ Invert Image [✓] Gamma Correction [✓] ─────────┤
+└───────────────────────────────────────────────────┘
+
+┌─ Inpainting Configuration 🎨 [Reset 🔄] ────────┐
+├─ Inpainter Model [dropdown] ──────────────────────┤
+├─ Inpainting Size [Slider] [SpinBox] ──────────────┤
+├─ Inpainting Precision [dropdown] ─────────────────┤
+├─ Mask Dilation Offset [Slider] [SpinBox] ────────┤
+├─ Kernel Size [Slider] [SpinBox] ──────────────────┤
+└───────────────────────────────────────────────────┘
+
+┌─ OCR & Extraction 📝 [Reset 🔄] ────────────────┐
+├─ OCR Model [dropdown] ────────────────────────────┤
+├─ Minimum Text Length [Slider] [SpinBox] ─────────┤
+├─ Ignore Bubble [Slider] [SpinBox] ────────────────┤
+├─ Probability Threshold [Slider] [SpinBox] ──────┤
+│  └─ [✓ Use Probability] ──────────────────────────┤
+├─ No Text Language Skip [✓] ──────────────────────┤
+└───────────────────────────────────────────────────┘
+
+┌─ Rendering & Layout 🖋️ [Reset 🔄] ─────────────┐
+├─ Renderer [dropdown] ─────────────────────────────┤
+├─ Font Size Minimum [Slider] [SpinBox] ────────────┤
+├─ Font Size Offset [Slider] [SpinBox] ─────────────┤
+├─ Disable Font Border [✓] ────────────────────────┤
+├─ Direction [dropdown] ────────────────────────────┤
+├─ Text Case: ○ Normal ○ UPPERCASE ○ lowercase ───┤
+├─ No Hyphenation [✓] RTL Rendering [✓] ──────────┤
+└───────────────────────────────────────────────────┘
+```
+
+**Bottom: Global Reset**
+```
+┌──────────────────────────────────────────────────────┐
+│      [Reset All Settings to Defaults] 🔄             │
+└──────────────────────────────────────────────────────┘
+```
+
+#### Part D: Validation & Constraint Enforcement
+
+**Design Philosophy:** Prevent invalid input at the UI control level rather than validating after the fact.
+
+**Primary Defense (Prevent Invalid Input):**
+- **Enum/Dropdown:** Use `QComboBox` with predefined options (e.g., Renderer: ["default", "advanced"])
+- **Odd-Only (kernel_size):** Use `QSpinBox` with `setSingleStep(2)` and `setMinimum(1)` → user can only select 1, 3, 5, 7
+- **Range-Constrained:** Use `QSlider` or `QSpinBox` with enforced `setMinimum()` / `setMaximum()`
+- **Radio Buttons:** For mutually exclusive options (text_case) — only one can be selected
+
+**Secondary Defense (Validation on Save):**
+```python
+# When user clicks save/apply:
+is_valid, error_msg = self.settings_manager.validate_setting(key, new_value)
+if not is_valid:
+    control.setStyleSheet("border: 2px solid red;")
+    control.setToolTip(error_msg)
+    # Disable save button — prevent storage of invalid value
+else:
+    is_saved, save_error = self.settings_manager.set_validated(key, new_value)
+    if is_saved:
+        control.setStyleSheet("")  # Clear red border
+        self._show_toast(f"{key} updated")
+    else:
+        control.setToolTip(save_error)
+```
+
+**Benefits:**
+- Invalid values never reach QSettings
+- User gets immediate feedback (red border + tooltip)
+- No surprise failures during translation
+- Controls constrain input proactively (spinbox with odd-only step)
+
+#### Part E: Text Case Handling
+
+Replace two separate boolean controls (`uppercase`, `lowercase`) with mutually exclusive radio buttons:
+
+```python
+# Old (conflicting):
+# "uppercase": False
+# "lowercase": False
+
+# New (single setting):
+# "text_case": "normal"  # or "uppercase" or "lowercase"
+```
+
+When serializing to backend (`get_translation_config()`), expand back to boolean pair:
+```python
+def get_translation_config(self):
+    # ... build config ...
+    
+    # Text case expansion
+    if self.text_case == "uppercase":
+        config["uppercase"] = True
+        config["lowercase"] = False
+    elif self.text_case == "lowercase":
+        config["uppercase"] = False
+        config["lowercase"] = True
+    else:  # "normal"
+        config["uppercase"] = False
+        config["lowercase"] = False
+    
+    return config
+```
+
+#### Part F: Reset Button Handlers
+
+Use section constants to prevent brittle string duplication:
+
+```python
+from settings_manager import SECTION_DETECTION, SECTION_INPAINTING, SECTION_OCR, SECTION_RENDERING
+
+def _on_reset_all_settings(self):
+    reply = QMessageBox.question(
+        self, "Reset All Settings?",
+        "Reset all settings to defaults? This cannot be undone.",
+        QMessageBox.Yes | QMessageBox.No
+    )
+    if reply == QMessageBox.Yes:
+        self.settings_manager.reset_all_settings()
+        self._render_settings_content()  # Reload UI
+        self._show_toast("Settings reset successfully")
+
+def _on_reset_section(self, section_name: str):
+    """section_name should be SECTION_DETECTION, SECTION_INPAINTING, etc."""
+    reply = QMessageBox.question(
+        self, f"Reset {section_name}?",
+        f"Reset all {section_name.lower()} to defaults?",
+        QMessageBox.Yes | QMessageBox.No
+    )
+    if reply == QMessageBox.Yes:
+        self.settings_manager.reset_section(section_name)
+        self._render_settings_content()
+        self._show_toast(f"{section_name} reset successfully")
+
+# Wire up buttons:
+self.reset_detection_btn.clicked.connect(
+    lambda: self._on_reset_section(SECTION_DETECTION)
+)
+self.reset_inpainting_btn.clicked.connect(
+    lambda: self._on_reset_section(SECTION_INPAINTING)
+)
+# ... etc
+```
 
 ---
 
-## Proposed Changes
+## Phase 3: Serialization & Backend Integration
 
-### UI Components
+### [MODIFY] `get_translation_config(self)` in dashboard.py
 
-We will update the PyQt5 UI dashboard and translation window to support optimistic updates and local caching.
+**Key Design:** All validation happens during settings UI interaction (Part D above). By the time translation occurs, all stored settings are guaranteed valid.
 
-#### [MODIFY] [translation.py](file:///c:/Users/neilc/OneDrive/Documents/GitHub/snipshot-desktop/ui/translation.py)
-- Change the `saved` signal to emit the newly created image dictionary:
-  `saved = pyqtSignal(dict)`
-- In `_on_save_complete(self, data: dict)`, emit the new image data dict with the signal:
-  `self.saved.emit(data)`
+1. **Read stored settings (no validation needed here):**
+   ```python
+   config = {
+       "detection": {
+           "detector": self.settings_manager.get("detector"),
+           "text_threshold": self.settings_manager.get("text_threshold"),
+           "unclip_ratio": self.settings_manager.get("unclip_ratio"),
+           # ... etc
+       },
+       "inpainting": { ... },
+       "rendering": { ... }
+   }
+   ```
 
-#### [MODIFY] [main.py](file:///c:/Users/neilc/OneDrive/Documents/GitHub/snipshot-desktop/main.py)
-- Connect the `saved` signal of the `TranslationWindow` to `self.dashboard.add_saved_image` instead of `self.dashboard.refresh`.
+2. **Expand text_case radio to boolean pair:**
+   ```python
+   text_case = self.settings_manager.get("text_case")
+   if text_case == "uppercase":
+       config["uppercase"] = True
+       config["lowercase"] = False
+   elif text_case == "lowercase":
+       config["uppercase"] = False
+       config["lowercase"] = True
+   else:  # "normal"
+       config["uppercase"] = False
+       config["lowercase"] = False
+   ```
 
-#### [MODIFY] [dashboard.py](file:///c:/Users/neilc/OneDrive/Documents/GitHub/snipshot-desktop/ui/dashboard.py)
+3. **Handle conditional settings (use_* flags):**
+   ```python
+   # Only include font_size in payload if use_font_size is True
+   if self.settings_manager.get("use_font_size"):
+       config["font_size"] = self.settings_manager.get("font_size")
+   # else: backend uses default calculation
+   
+   # Same for line_spacing, probability, etc.
+   ```
 
-- Keep references to layout and widget groups:
-  - Add `self._folder_cards = {}` and `self._image_cards = {}` mappings.
-  - Store `self.folder_grid` and `self.folder_grid_layout` as instance variables in `_render_root_view`.
-- Update `_add_image_grid` to populate `self._image_cards`.
-- Update `ImageCard` signals to emit `image_id (int)` instead of `image_data (dict)`.
-- Implement state helpers:
-  - `_get_cached_image(self, image_id: int) -> Optional[dict]`
-  - `_reconcile_folder_counts(self)`: Recomputes folder image counts and updates visible folder card labels.
-- Implement UI patch helpers & primitives:
-  - `_add_folder_card_widget(self, folder: dict)`
-  - `_remove_folder_card_widget(self, folder_id: int)`
-  - `_add_image_card_widget(self, image: dict)`
-  - `_remove_image_card_widget(self, image_id: int)`
-  - `add_saved_image(self, image_data: dict)`: Inserts new image into cache, calls `_add_image_card_widget` if current view criteria is matched, and reconcile counts.
-  - `_move_image_locally(self, image_id: int, new_folder_id: int)`: Updates `folder_id` in image cache, calls `_remove_image_card_widget` or `_add_image_card_widget` according to the active view matrix, and reconciles counts.
-- Update CRUD event handlers to apply mutations to cache + patch visible widgets:
-  - `_on_image_clicked(self, image_id: int)`
-  - `_on_new_folder(self)`
-  - `_on_delete_folder(self, folder_id: int, folder_name: str)`
-  - `_on_rename_folder(self, folder_id: int, current_name: str)`
-  - `_on_delete_image(self, image_id: int)`
-  - `_on_rename_image(self, image_id: int)`
-  - `_on_move_image(self, image_id: int)`
-  - `_on_image_dropped(self, folder_id: int, image_id: int)`
+**Benefits:**
+- No validation failures during translation (they're caught earlier)
+- Translation workflow is clean and reliable
+- No surprise "Invalid kernel_size" errors mid-workflow
+- Settings are validated at input time, not at use time
+
+---
+
+## Files to Modify/Create
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `config_metadata.py` | **CREATE** | Centralized settings metadata (single source of truth for ranges, constraints, labels, tooltips) |
+| `utils/settings_manager.py` | **MODIFY** | Add section constants, `validate_setting()`, `set_validated()`, `reset_all_settings()`, `reset_section()` |
+| `ui/dashboard.py` | **MODIFY** | Restructure settings layout, implement control-level constraint enforcement, use `settings_manager.get(key)` on-demand, handle resets using section constants |
+
+---
+
+## Implementation Checklist
+
+### Phase 1: Metadata & Validation
+- [ ] Create `config_metadata.py` with complete `SETTINGS_METADATA`
+- [ ] Add `validate_setting()` to `settings_manager.py`
+- [ ] Add `reset_all_settings()` and `reset_section()` to `settings_manager.py`
+- [ ] Test validation logic for edge cases (kernel_size = 4, line_spacing = -1, etc.)
+
+### Phase 2: Settings UI
+- [ ] Add `self.advanced_settings_visible` flag to dashboard
+- [ ] Implement `_create_numeric_control()`, `_create_boolean_control()`, `_create_options_control()`, `_create_radio_control()`
+- [ ] Rewrite `_render_settings_content()` with two-tier layout
+- [ ] Add "Show Advanced Settings" toggle button
+- [ ] Add section reset buttons (🔄 icon per section)
+- [ ] Add global reset button at bottom
+- [ ] Implement validation UI feedback (red borders, error tooltips)
+
+### Phase 3: Integration
+- [ ] Update `get_translation_config()` with full validation
+- [ ] Implement text_case expansion (radio selection → boolean pair)
+- [ ] Test settings persistence across app restarts
+- [ ] Test section resets (only affect target section)
+- [ ] Test global reset (all settings → defaults)
 
 ---
 
 ## Verification Plan
 
-### Automated Tests
-- Run Python compilation check to verify no syntax errors:
-  ```powershell
-  .venv\Scripts\python -m py_compile ui/translation.py ui/dashboard.py main.py
-  ```
+### Phase 1: Metadata & Validation
+1. Verify `SETTINGS_METADATA` loads without errors
+2. Test: `validate_setting("kernel_size", 4)` → returns `(False, "must be odd")`
+3. Test: `validate_setting("kernel_size", 5)` → returns `(True, None)`
+4. Test: `validate_setting("line_spacing", -1)` → returns `(False, "must be positive")`
+5. Test: `validate_setting("font_size_minimum", 25)` with `font_size=24` → returns `(False, "must be ≤ Font Size")`
 
-### Manual Verification
-- Start the application:
-  ```powershell
-  .venv\Scripts\python main.py
-  ```
-- **Folder CRUD Test**: Create a folder, rename it, and delete it. Verify all transitions are instant, with no "Loading your library..." screens shown.
-- **Image CRUD Test**: Rename an image, delete an image, and move an image to a folder. Verify these updates happen instantly.
-- **Image Drop Test**: Drag and drop an image into a folder. Verify the thumbnail grid and folder counts update immediately with no full reload.
-- **Save Capture Test**: Trigger a screenshot snip, translate it, and save it to a folder. Verify the dashboard updates immediately when the dialog closes, displaying the new screenshot card.
+### Phase 2: Settings UI
+6. Launch app, navigate to Settings
+7. Verify **Basic Settings** section visible (9 controls)
+8. Verify **Advanced Settings** section hidden
+9. Click **"Show Advanced Settings"** → section expands with ~25 additional controls
+10. Click again → section collapses
+11. Verify text case appears as **radio buttons** (Normal / UPPERCASE / lowercase), not checkboxes
+12. Try selecting multiple radio options → only one remains selected
+13. Enter invalid value (e.g., kernel_size = 4):
+    - Control shows red border
+    - Tooltip displays: "Must be odd (1, 3, 5, 7)"
+    - Save button disabled
+14. Correct the value → red border clears, save enabled
+15. Test "Auto" checkboxes:
+    - Check "Font Size Auto" → slider/spinbox disabled
+    - Uncheck → re-enabled
+
+### Phase 3: Reset & Persistence
+16. Click **"Reset Detection Settings"** → only detection controls revert
+17. Verify other settings unchanged
+18. Click **"Reset All Settings to Defaults"**:
+    - Confirmation dialog appears
+    - After confirming, all controls show defaults
+19. Change several settings, close app, restart:
+    - All settings persist
+20. Trigger a translation:
+    - Inspect API payload (or logs)
+    - Verify text_case radio correctly expands to `uppercase=T/F, lowercase=T/F`
+    - Verify all numeric/enum settings present and validated
+
+---
+
+## Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **Two-tier settings** | Basic tier for casual users; Advanced behind toggle keeps UI clean and non-intimidating |
+| **Centralized metadata** | Single source of truth for ranges, constraints, labels; eliminates hardcoded UI values |
+| **Text case as radio buttons** | Mutually exclusive option cleaner than two conflicting booleans; prevents invalid state |
+| **Section-level resets** | Power users can reset specific categories without losing all preferences |
+| **Validation on change** | Red borders + tooltips make constraints discoverable without docs |
+| **Metadata constraints** | Centralizes rules; easier to maintain, test, and update validation logic |
+
+---
+
+## Known Questions & Decisions Made
+
+| Question | Decision |
+|----------|----------|
+| Text Case default: "normal" or user's last choice? | Default to "normal"; respects fresh install UX |
+| font_size_minimum = -1 (no minimum): always allow reverting? | Yes, always allow -1 for "no minimum" state |
+| Confirm section resets? | Global reset: Yes (confirmation dialog). Section resets: Optional (brief toast). |
+
+---
+
+## Future Enhancements
+
+### High-Value Features (Prioritize These)
+
+- **Preset Profiles** ⭐ (Recommended next phase)
+  - Predefined profiles: "Manga", "Light Novel", "Comic", "General"
+  - Each profile auto-configures Detection Size, Thresholds, Rendering, OCR, etc.
+  - Single-click switch instead of manual adjustment
+  - Most users benefit more from presets than from tuning individual parameters
+  - Lower learning curve, higher conversion
+
+### Lower-Priority Features
+
+- Import/export settings as JSON
+- Comparison view (current vs. default)
+- Setting change history/undo
+- Per-language configuration overrides

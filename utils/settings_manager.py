@@ -9,24 +9,14 @@ cloud syncing, and background retry loops for failed synchronization.
 import os
 import json
 import logging
-from typing import Any
+from typing import Any, Tuple, Optional
 
 from PyQt5.QtCore import QObject, QTimer, QThread, pyqtSignal, QSettings
 
+from config_metadata import SETTINGS_METADATA, DEFAULT_SETTINGS, SECTION_LABELS
+
 # Setup logging
 logger = logging.getLogger(__name__)
-
-DEFAULT_SETTINGS = {
-    "theme": "light",
-    "snip_shortcut_key": 16777225,            # Qt.Key_Print Screen (0x01000009)
-    "continuous_shortcut_key": 16777240,     # Qt.Key_F9 (0x01000038)
-    "continuous_snip_interval": 500,
-    "target_language": "ENG",
-    "detection_size": 1536,
-    "box_threshold": 0.7,
-    "inpainting_size": 2048,
-    "inpainter": "lama_large"
-}
 
 
 class SettingsSyncWorker(QThread):
@@ -180,7 +170,7 @@ class SettingsManager(QObject):
         """Upsert the active user's settings profile to Supabase in a background thread."""
         if not self.user_id:
             return
-
+ 
         if self.sync_worker is not None and self.sync_worker.isRunning():
             # Let the active run finish; the retry/debounce will fire again if needed
             return
@@ -283,6 +273,142 @@ class SettingsManager(QObject):
                 self.qsettings.setValue("offline/continuous_snip_interval", legacy_interval)
             self.qsettings.remove("continuous_snip_interval")
             logger.info("Migrated legacy continuous_snip_interval key in QSettings.")
+
+    # ===================================================================
+    # Validation & In-Place Resets (New API)
+    # ===================================================================
+
+    def get_keys_in_section(self, section_name: str) -> list:
+        """Dynamic helper to find all keys associated with a section ID in metadata."""
+        return [
+            key for key, meta in SETTINGS_METADATA.items()
+            if meta.get("section") == section_name
+        ]
+
+    def validate_setting(self, key: str, value: Any, current_ui_context: dict = None, allow_unknown: bool = False) -> Tuple[bool, Optional[str]]:
+        """Validate input values against schemas defined in SETTINGS_METADATA.
+        
+        Enforces types, handles sentinel bypasses, and performs constraint checks.
+        """
+        metadata = SETTINGS_METADATA.get(key)
+        if not metadata:
+            if allow_unknown:
+                logger.warning(f"Allowing validation of unknown setting key: '{key}'")
+                return True, None
+            return False, f"Unknown setting key: '{key}'"
+
+        expected_type = metadata.get("type")
+        
+        # 1. Type Coercion & Verification
+        coerced_value = value
+        try:
+            if expected_type == "int":
+                coerced_value = int(value)
+            elif expected_type == "float":
+                coerced_value = float(value)
+            elif expected_type == "bool":
+                if isinstance(value, str):
+                    coerced_value = value.lower() in ("true", "1", "yes")
+                else:
+                    coerced_value = bool(value)
+            elif expected_type == "string":
+                coerced_value = str(value)
+        except (ValueError, TypeError):
+            return False, f"Value '{value}' is not of expected type: {expected_type}"
+
+        # 2. Handle Sentinel Bypass (e.g. -1 for font_size_minimum)
+        if key == "font_size_minimum" and coerced_value == -1:
+            return True, None
+
+        validation_rules = metadata.get("validation", {})
+        constraint = validation_rules.get("constraint")
+
+        if constraint == "range":
+            min_val, max_val = validation_rules.get("min"), validation_rules.get("max")
+            if not (min_val <= coerced_value <= max_val):
+                return False, f"Must be between {min_val} and {max_val}"
+
+        elif constraint == "odd_only":
+            if int(coerced_value) % 2 == 0:
+                return False, "Must be odd (1, 3, 5, 7)"
+
+        elif constraint == "lte_font_size":
+            # Resolve comparison target from UI context, else fallback to storage
+            font_size = None
+            if current_ui_context and "font_size" in current_ui_context:
+                font_size = current_ui_context["font_size"]
+            else:
+                font_size = self.get_setting("font_size")
+
+            if font_size is not None and coerced_value > font_size:
+                return False, f"Must be ≤ Font Size ({font_size}) or -1"
+
+        elif constraint == "positive":
+            if coerced_value <= 0:
+                return False, "Must be positive (> 0)"
+
+        elif constraint == "non_negative":
+            if coerced_value < 0:
+                return False, "Must be non-negative (≥ 0)"
+
+        elif constraint == "enum":
+            options = validation_rules.get("options", [])
+            if coerced_value not in options:
+                return False, f"Must be one of: {', '.join(options)}"
+
+        return True, None
+
+    def set_validated(self, key: str, value: Any) -> Tuple[bool, Optional[str]]:
+        """Validate the setting and set it if valid."""
+        is_valid, error_msg = self.validate_setting(key, value)
+        if not is_valid:
+            return False, error_msg
+        
+        # Convert type before saving if validation was successful
+        expected_type = SETTINGS_METADATA[key].get("type")
+        coerced_value = value
+        try:
+            if expected_type == "int":
+                coerced_value = int(value)
+            elif expected_type == "float":
+                coerced_value = float(value)
+            elif expected_type == "bool":
+                if isinstance(value, str):
+                    coerced_value = value.lower() in ("true", "1", "yes")
+                else:
+                    coerced_value = bool(value)
+            elif expected_type == "string":
+                coerced_value = str(value)
+        except Exception:
+            pass
+
+        self.set_setting(key, coerced_value)
+        return True, None
+
+    def reset_all_settings(self) -> None:
+        """Resets all settings to their default values derived from metadata."""
+        group = f"user_{self.user_id}" if self.user_id else "offline"
+        for key in DEFAULT_SETTINGS:
+            default_val = DEFAULT_SETTINGS[key]
+            self.qsettings.setValue(f"{group}/{key}", default_val)
+            self.setting_changed.emit(key, default_val)
+        
+        if self.user_id:
+            self.mark_dirty(True)
+            self.debounce_timer.start()
+
+    def reset_section(self, section_name: str) -> None:
+        """Resets only keys associated with the given section in metadata."""
+        keys_to_reset = self.get_keys_in_section(section_name)
+        group = f"user_{self.user_id}" if self.user_id else "offline"
+        for key in keys_to_reset:
+            default_val = DEFAULT_SETTINGS[key]
+            self.qsettings.setValue(f"{group}/{key}", default_val)
+            self.setting_changed.emit(key, default_val)
+        
+        if self.user_id:
+            self.mark_dirty(True)
+            self.debounce_timer.start()
 
 
 # Instantiate the settings manager singleton class

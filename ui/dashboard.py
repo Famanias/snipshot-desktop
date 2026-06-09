@@ -38,8 +38,14 @@ from PyQt5.QtWidgets import (
     QListWidgetItem, QStackedWidget, QProgressBar, QDialog,
     QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox,
     QLayout, QSplitter, QSpinBox, QDoubleSpinBox, QSlider, QToolButton,
+    QCheckBox, QRadioButton, QGroupBox,
 )
-from typing import Optional
+from config_metadata import (
+    SETTINGS_METADATA, DEFAULT_SETTINGS, SECTION_LABELS,
+    SECTION_DETECTION, SECTION_INPAINTING, SECTION_OCR, SECTION_RENDERING
+)
+from PyQt5.QtGui import QKeySequence
+from typing import Optional, Any, Tuple, Dict
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QThread, QRect, QPoint
 from PyQt5.QtGui import QIcon, QPixmap, QCursor, QFont, QKeySequence, QCloseEvent
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -1595,6 +1601,108 @@ class QueueItemWidget(QFrame):
             self.progress.hide()
 
 
+class SettingControlWrapper:
+    """Wrapper to interact with compound UI settings controls uniformly."""
+    def __init__(self, key: str, main_layout_widget: QWidget):
+        self.key = key
+        self.main_layout_widget = main_layout_widget
+        self.slider = None
+        self.spinbox = None
+        self.checkbox = None
+        self.radio_buttons = []
+        self.combo = None
+        self.shortcut_display = None
+        self.shortcut_btn = None
+        self.badge = None
+
+    def block_signals(self, block: bool):
+        for widget in [self.slider, self.spinbox, self.checkbox, self.combo] + self.radio_buttons:
+            if widget:
+                widget.blockSignals(block)
+
+    def set_value(self, value: Any):
+        self.block_signals(True)
+        
+        # Handle checkbox values
+        if self.checkbox:
+            if self.spinbox:
+                # Compound control (checkbox represents override/not None)
+                self.checkbox.setChecked(value is not None)
+                if value is None:
+                    self.spinbox.setEnabled(False)
+            else:
+                # Standard boolean checkbox
+                self.checkbox.setChecked(bool(value))
+        
+        # Update numeric controls
+        if value is not None:
+            if self.spinbox:
+                self.spinbox.setEnabled(True)
+                self.spinbox.setValue(value)
+            if self.slider:
+                self.slider.setEnabled(True)
+                if isinstance(value, float):
+                    self.slider.setValue(int(value * 100))
+                else:
+                    self.slider.setValue(value)
+            if self.badge:
+                if isinstance(value, float):
+                    self.badge.setText(f"{value:.2f}")
+                else:
+                    self.badge.setText(f"{value}")
+                    
+        # Update choice controls
+        if self.combo:
+            idx = self.combo.findData(value)
+            if idx >= 0:
+                self.combo.setCurrentIndex(idx)
+        for radio in self.radio_buttons:
+            if radio.property("val") == value:
+                radio.setChecked(True)
+                
+        # Update shortcut key representation if applicable
+        if self.shortcut_display and isinstance(value, int) and not isinstance(value, bool):
+            self.shortcut_display.setText(QKeySequence(value).toString())
+                
+        self.block_signals(False)
+
+    def get_ui_value(self) -> Any:
+        """Read live value from the UI inputs."""
+        if self.checkbox:
+            if self.spinbox:
+                if not self.checkbox.isChecked():
+                    return None
+            else:
+                return self.checkbox.isChecked()
+        if self.spinbox:
+            return self.spinbox.value()
+        if self.combo:
+            return self.combo.currentData()
+        for radio in self.radio_buttons:
+            if radio.isChecked():
+                return radio.property("val")
+        return None
+
+    def show_error(self, error_message: str):
+        """Applies error styling to the control's inputs."""
+        border_style = "border: 1.5px solid red; border-radius: 4px;"
+        if self.spinbox:
+            self.spinbox.setStyleSheet(border_style)
+            self.spinbox.setToolTip(error_message)
+        elif self.combo:
+            self.combo.setStyleSheet(border_style)
+            self.combo.setToolTip(error_message)
+
+    def clear_error(self):
+        """Clears validation highlights."""
+        if self.spinbox:
+            self.spinbox.setStyleSheet("")
+            self.spinbox.setToolTip("")
+        elif self.combo:
+            self.combo.setStyleSheet("")
+            self.combo.setToolTip("")
+
+
 class DashboardWindow(QWidget):
     """
     Main dashboard with folder and image management.
@@ -1625,16 +1733,10 @@ class DashboardWindow(QWidget):
         self.active_nav = "all"
         
         from utils.settings_manager import settings_manager
-        self.target_language = settings_manager.get_setting("target_language", TRANSLATION_TARGET_LANG)
-        self.snip_shortcut_key = settings_manager.get_setting("snip_shortcut_key", DEFAULT_SHORTCUT_KEY)
+        self.settings_manager = settings_manager
+        self._setting_widgets = {}
+        self.advanced_settings_visible = self.settings_manager.get_setting("ui_advanced_expanded", False)
         self.continuous_mode_enabled = False
-        self.continuous_shortcut_key = settings_manager.get_setting("continuous_shortcut_key", DEFAULT_CONTINUOUS_SHORTCUT_KEY)
-        self.continuous_snip_interval = settings_manager.get_setting("continuous_snip_interval", DEFAULT_CONTINUOUS_SNIP_INTERVAL)
-        
-        self.detection_size = settings_manager.get_setting("detection_size", 1536)
-        self.box_threshold = settings_manager.get_setting("box_threshold", 0.7)
-        self.inpainting_size = settings_manager.get_setting("inpainting_size", 2048)
-        self.inpainter = settings_manager.get_setting("inpainter", TRANSLATION_INPAINTER)
         
         settings_manager.profile_changed.connect(self._on_settings_profile_changed)
         self.language_options = [
@@ -3164,560 +3266,670 @@ class DashboardWindow(QWidget):
             """
 
     def _render_settings_content(self):
+        """Orchestrates layout generation for Settings tab."""
         c = theme.c
 
-        # ── Page title ────────────────────────────────────────────────
-        # page_title = QLabel("Settings")
-        # page_title.setStyleSheet(
-        #     f"font-size: {FONT['display']['size']}px; "
-        #     f"font-weight: {FONT['display']['weight']}; "
-        #     f"color: {c['text']}; "
-        #     "background-color: transparent; "
-        #     "border: none;"
-        # )
-        # self.content_layout.addWidget(page_title)
-        # self.content_layout.addSpacing(SPACE["md"])
+        # Clear existing wrappers
+        self._setting_widgets.clear()
 
-        # ── Appearance ────────────────────────────────────────────────
-        self.content_layout.addWidget(self._section_header_label("", "Appearance"))
-        self.content_layout.addSpacing(SPACE["sm"])
-
-        toggle_row = QHBoxLayout()
-        toggle_row.setSpacing(SPACE["sm"])
-
-        self.light_btn = QPushButton("Light")
-        self.light_btn.setIcon(load_icon("light_mode_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
-        self.light_btn.setIconSize(QSize(24, 24))
-        self.light_btn.setCursor(Qt.PointingHandCursor)
-        self.light_btn.setStyleSheet(self._theme_pill_style(not theme.is_dark))
-        self.light_btn.clicked.connect(lambda: theme.set_mode("light"))
-
-        self.dark_btn = QPushButton("Dark")
-        self.dark_btn.setIcon(load_icon("dark_mode_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
-        self.dark_btn.setIconSize(QSize(24, 24))
-        self.dark_btn.setCursor(Qt.PointingHandCursor)
-        self.dark_btn.setStyleSheet(self._theme_pill_style(theme.is_dark))
-        self.dark_btn.clicked.connect(lambda: theme.set_mode("dark"))
-
-        toggle_row.addWidget(self.light_btn)
-        toggle_row.addWidget(self.dark_btn)
-        toggle_row.addStretch()
-        self.content_layout.addLayout(toggle_row)
+        # 1. Page title / header
+        # The page headers are already updated by _on_nav_settings()
+        
+        # 2. Render Basic Settings QWidget
+        basic_panel = self._render_basic_settings()
+        self.content_layout.addWidget(basic_panel)
         self.content_layout.addSpacing(SPACE["lg"])
 
-        # ── Capture Shortcuts ──────────────────────────────────────────
-        self.content_layout.addWidget(self._section_header_label("", "Capture Shortcuts"))
-        self.content_layout.addSpacing(SPACE["xs"])
-
-        sc_label = QLabel("Single Snip Shortcut")
-        sc_label.setStyleSheet(
-            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
-            "background-color: transparent; border: none;"
+        # 3. Add Advanced settings toggle button
+        toggle_layout = QHBoxLayout()
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.advanced_toggle_btn = StyledButton(
+            "Show Advanced Settings" if not self.advanced_settings_visible else "Hide Advanced Settings",
+            variant="secondary"
         )
-        self.content_layout.addWidget(sc_label)
-        self.content_layout.addSpacing(SPACE["sm"])
-
-        sc_row = QHBoxLayout()
-        sc_row.setSpacing(SPACE["sm"])
-
-        self.shortcut_display = QLabel(self._key_name(self.snip_shortcut_key))
-        self.shortcut_display.setAlignment(Qt.AlignCenter)
-        self.shortcut_display.setStyleSheet(f"""
-            QLabel {{
-                padding: {SPACE['sm']}px {SPACE['lg']}px;
-                border: 1px solid {c['border']};
-                border-bottom: 3px solid {c['border']};
-                border-radius: {SPACE['xs']}px;
-                font-size: {FONT['label']['size']}px;
-                font-weight: 700;
-                background-color: {c['surface_alt']};
-                color: {c['text']};
-                min-width: 80px;
-                letter-spacing: 1px;
-            }}
-        """)
-        sc_row.addWidget(self.shortcut_display)
-
-        self.shortcut_btn = _ShortcutButton("Change Shortcut")
-        self.shortcut_btn.shortcut_captured.connect(self._on_shortcut_captured)
-        sc_row.addWidget(self.shortcut_btn)
-        sc_row.addStretch()
-        self.content_layout.addLayout(sc_row)
+        self.advanced_toggle_btn.clicked.connect(self._toggle_advanced_panel)
+        toggle_layout.addWidget(self.advanced_toggle_btn)
+        toggle_layout.addStretch()
+        self.content_layout.addLayout(toggle_layout)
         self.content_layout.addSpacing(SPACE["md"])
 
-        csc_label = QLabel("Continuous Snip Shortcut")
-        csc_label.setStyleSheet(
-            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        self.content_layout.addWidget(csc_label)
-        self.content_layout.addSpacing(SPACE["sm"])
+        # 4. Render Advanced Settings container
+        self.advanced_container = self._render_advanced_settings()
+        self.content_layout.addWidget(self.advanced_container)
+        self._update_advanced_visibility()
+        self.content_layout.addSpacing(SPACE["xl"])
 
-        csc_row = QHBoxLayout()
-        csc_row.setSpacing(SPACE["sm"])
+        # 5. Global Reset Button
+        reset_row = QHBoxLayout()
+        reset_row.setContentsMargins(0, 0, 0, 0)
+        
+        global_reset_btn = StyledButton("Reset All Settings to Defaults", variant="secondary")
+        global_reset_btn.setIcon(load_icon("refresh_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        global_reset_btn.clicked.connect(self._on_reset_all_settings)
+        reset_row.addWidget(global_reset_btn)
+        reset_row.addStretch()
+        self.content_layout.addLayout(reset_row)
 
-        self.continuous_shortcut_display = QLabel(self._key_name(self.continuous_shortcut_key))
-        self.continuous_shortcut_display.setAlignment(Qt.AlignCenter)
-        self.continuous_shortcut_display.setStyleSheet(f"""
-            QLabel {{
-                padding: {SPACE['sm']}px {SPACE['lg']}px;
+    def _render_basic_settings(self) -> QWidget:
+        """Constructs and returns a styled container widget with all basic settings."""
+        container = QWidget()
+        container.setStyleSheet("background-color: transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE["md"])
+
+        layout.addWidget(self._section_header_label("", "General Preferences"))
+        layout.addSpacing(SPACE["xs"])
+
+        # Render basic settings dynamically using metadata
+        for key, meta in SETTINGS_METADATA.items():
+            if meta.get("tier") == "basic":
+                # Ensure we skip dependent boolean keys to let the parent control handle them
+                if key in ("use_font_size", "use_line_spacing"):
+                    continue
+                wrapper = self._build_control(key, meta)
+                layout.addWidget(wrapper.main_layout_widget)
+                self._setting_widgets[key] = wrapper
+
+        return container
+
+    def _render_advanced_settings(self) -> QWidget:
+        """Constructs and returns a styled container widget with all advanced sections."""
+        container = QWidget()
+        container.setStyleSheet("background-color: transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE["lg"])
+
+        # Dynamically find sections for advanced settings in ordered fashion
+        advanced_sections = []
+        for key, meta in SETTINGS_METADATA.items():
+            if meta.get("tier") == "advanced":
+                sec = meta.get("section")
+                if sec and sec not in advanced_sections:
+                    advanced_sections.append(sec)
+
+        # Render sections
+        for sec in advanced_sections:
+            section_card = self._render_section(sec)
+            layout.addWidget(section_card)
+
+        return container
+
+    def _render_section(self, section_id: str) -> QWidget:
+        """Constructs a styled frame representing one advanced collapsible section card."""
+        c = theme.c
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {c['surface']};
                 border: 1px solid {c['border']};
-                border-bottom: 3px solid {c['border']};
-                border-radius: {SPACE['xs']}px;
-                font-size: {FONT['label']['size']}px;
-                font-weight: 700;
-                background-color: {c['surface_alt']};
-                color: {c['text']};
-                min-width: 80px;
-                letter-spacing: 1px;
+                border-left: 4px solid {c['primary']};
+                border-radius: {SPACE['sm']}px;
             }}
         """)
-        csc_row.addWidget(self.continuous_shortcut_display)
-
-        self.continuous_shortcut_btn = _ShortcutButton("Change Shortcut")
-        self.continuous_shortcut_btn.shortcut_captured.connect(self._on_continuous_shortcut_captured)
-        csc_row.addWidget(self.continuous_shortcut_btn)
-        csc_row.addStretch()
-        self.content_layout.addLayout(csc_row)
-        self.content_layout.addSpacing(SPACE["lg"])
-
-        # ── Continuous Snipping ────────────────────────────────────────
-        self.content_layout.addWidget(self._section_header_label("", "Continuous Snipping"))
-        self.content_layout.addSpacing(SPACE["xs"])
-
-        self.content_layout.addWidget(self._hint_label(
-            "Choose whether to capture one screen region at a time or automatically return to capturing."
-        ))
-        self.content_layout.addSpacing(SPACE["sm"])
-
-        cont_row = QHBoxLayout()
-        cont_row.setSpacing(SPACE["sm"])
-
-        self.single_snip_btn = QPushButton("Single Snip")
-        self.single_snip_btn.setCursor(Qt.PointingHandCursor)
-        self.single_snip_btn.setStyleSheet(self._continuous_pill_style(not self.continuous_mode_enabled))
-        self.single_snip_btn.clicked.connect(lambda: self._set_continuous_mode(False))
-
-        self.continuous_snip_btn = QPushButton("Continuous Snip")
-        self.continuous_snip_btn.setCursor(Qt.PointingHandCursor)
-        self.continuous_snip_btn.setStyleSheet(self._continuous_pill_style(self.continuous_mode_enabled))
-        self.continuous_snip_btn.clicked.connect(lambda: self._set_continuous_mode(True))
-
-        cont_row.addWidget(self.single_snip_btn)
-        cont_row.addWidget(self.continuous_snip_btn)
-        cont_row.addStretch()
-        self.content_layout.addLayout(cont_row)
-        self.content_layout.addSpacing(SPACE["md"])
-
-        # Snip Interval (ms) Setting
-        interval_row = QHBoxLayout()
-        interval_row.setSpacing(SPACE["sm"])
-
-        interval_lbl = QLabel("Snip Interval (ms)")
-        interval_lbl.setStyleSheet(self._settings_label_style())
-
-        self.interval_input = QLineEdit()
-        self.interval_input.setStyleSheet(self._settings_input_style())
-        self.interval_input.setFixedWidth(100)
-        self.interval_input.setText(str(self.continuous_snip_interval))
-
-        from PyQt5.QtGui import QIntValidator
-        self.interval_input.setValidator(QIntValidator(100, 10000, self))
-        self.interval_input.editingFinished.connect(self._on_interval_editing_finished)
-
-        interval_row.addWidget(interval_lbl)
-        interval_row.addWidget(self.interval_input)
-        interval_row.addStretch()
-        self.content_layout.addLayout(interval_row)
-
-        self.content_layout.addWidget(self._hint_label(
-            "Time to wait before the next capture starts."
-        ))
-        self.content_layout.addSpacing(SPACE["lg"])
-
-        # ── Translation Settings ───────────────────────────────────────
-        self.content_layout.addWidget(self._section_header_label("", "Translation Settings"))
-        self.content_layout.addSpacing(SPACE["sm"])
-
-        lang_label = QLabel("Default Target Language")
-        lang_label.setStyleSheet(
-            f"font-weight: 600; color: {c['text']}; "
-            f"font-size: {FONT['label']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        self.content_layout.addWidget(lang_label)
-        self.content_layout.addSpacing(SPACE["xs"])
-
-        self.language_combo = QComboBox()
-        self.language_combo.setStyleSheet(self._settings_input_style())
-        for label, code in self.language_options:
-            self.language_combo.addItem(f"{label} ({code})", code)
-        current_index = self.language_combo.findData(self.target_language)
-        if current_index >= 0:
-            self.language_combo.setCurrentIndex(current_index)
-        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
-        self.content_layout.addWidget(self.language_combo)
-        self.content_layout.addSpacing(SPACE["lg"])
-
-        # ── Advanced Parameters ───────────────────────────────────────
-        self.content_layout.addWidget(self._section_header_label("", "Advanced Parameters"))
-
-        # ── Detection Size ──
-        self.content_layout.addSpacing(SPACE["sm"])
-        det_row = QHBoxLayout()
-        det_lbl = QLabel("Detection Size")
-        det_lbl.setStyleSheet(
-            f"font-weight: 600; color: {c['text']}; "
-            f"font-size: {FONT['label']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        det_row.addWidget(det_lbl)
-        det_row.addStretch()
+        apply_card_shadow(card)
         
-        self.det_save_btn = StyledButton("✓", variant="primary")
-        self.det_save_btn.clicked.connect(self._save_detection_size)
-        self.det_save_btn.hide()
-        det_row.addWidget(self.det_save_btn)
-        
-        self.det_cancel_btn = StyledButton("✕", variant="secondary")
-        self.det_cancel_btn.clicked.connect(self._cancel_detection_size)
-        self.det_cancel_btn.hide()
-        det_row.addWidget(self.det_cancel_btn)
-        
-        self.detection_size_value = QLabel(f"{self.detection_size} px")
-        self.detection_size_value.setStyleSheet(
-            f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        det_row.addWidget(self.detection_size_value)
-        self.content_layout.addLayout(det_row)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
+        layout.setSpacing(SPACE["sm"])
 
-        self.detection_size_slider = QSlider(Qt.Horizontal)
-        self.detection_size_slider.setRange(DETECTION_SIZE_MIN, DETECTION_SIZE_MAX)
-        self.detection_size_slider.setSingleStep(DETECTION_SIZE_STEP)
-        self.detection_size_slider.setValue(self.detection_size)
-        self.detection_size_slider.setStyleSheet(self._styled_slider())
-        self.detection_size_slider.valueChanged.connect(self._on_detection_size_changed)
-        self.content_layout.addWidget(self.detection_size_slider)
-        self.content_layout.addWidget(self._hint_label(
-            "Controls resolution for text detection. Higher values improve quality but are slower."
-        ))
-
-        # ── Box Threshold ──
-        self.content_layout.addSpacing(SPACE["sm"])
-        box_row = QHBoxLayout()
-        box_lbl = QLabel("Box Threshold")
-        box_lbl.setStyleSheet(
-            f"font-weight: 600; color: {c['text']}; "
-            f"font-size: {FONT['label']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        box_row.addWidget(box_lbl)
-        box_row.addStretch()
+        # Header Row: Title on the left, Reset Button on the right
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.box_save_btn = StyledButton("✓", variant="primary")
-        self.box_save_btn.clicked.connect(self._save_box_threshold)
-        self.box_save_btn.hide()
-        box_row.addWidget(self.box_save_btn)
+        title_text = SECTION_LABELS.get(section_id, section_id.title())
+        header_layout.addWidget(self._section_header_label("", title_text))
+        header_layout.addStretch()
+
+        reset_btn = QToolButton()
+        reset_btn.setText(" Reset ")
+        reset_btn.setIcon(load_icon("refresh_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+        reset_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        reset_btn.setCursor(Qt.PointingHandCursor)
+        reset_btn.setStyleSheet(f"""
+            QToolButton {{
+                background-color: {c['surface_alt']};
+                border: 1px solid {c['border']};
+                border-radius: 4px;
+                padding: 4px 8px;
+                color: {c['text_secondary']};
+                font-weight: 500;
+            }}
+            QToolButton:hover {{
+                background-color: {c['hover']};
+                color: {c['text']};
+            }}
+        """)
+        reset_btn.clicked.connect(lambda _, s=section_id: self._on_reset_section(s))
+        header_layout.addWidget(reset_btn)
         
-        self.box_cancel_btn = StyledButton("✕", variant="secondary")
-        self.box_cancel_btn.clicked.connect(self._cancel_box_threshold)
-        self.box_cancel_btn.hide()
-        box_row.addWidget(self.box_cancel_btn)
-        
-        self.box_threshold_value = QLabel(f"{self.box_threshold:.2f}")
-        self.box_threshold_value.setStyleSheet(
-            f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        box_row.addWidget(self.box_threshold_value)
-        self.content_layout.addLayout(box_row)
+        layout.addLayout(header_layout)
+        layout.addSpacing(SPACE["xs"])
 
-        self.box_threshold_slider = QSlider(Qt.Horizontal)
-        self.box_threshold_slider.setRange(
-            int(BOX_THRESHOLD_MIN * 100), int(BOX_THRESHOLD_MAX * 100)
-        )
-        self.box_threshold_slider.setSingleStep(5)
-        self.box_threshold_slider.setValue(int(self.box_threshold * 100))
-        self.box_threshold_slider.setStyleSheet(self._styled_slider())
-        self.box_threshold_slider.valueChanged.connect(self._on_box_threshold_changed)
-        self.content_layout.addWidget(self.box_threshold_slider)
-        self.content_layout.addWidget(self._hint_label(
-            "Minimum confidence for translating a detected region."
-        ))
+        # Populate controls for this section dynamically
+        for key, meta in SETTINGS_METADATA.items():
+            if meta.get("tier") == "advanced" and meta.get("section") == section_id:
+                if key in ("use_prob",):
+                    continue
+                wrapper = self._build_control(key, meta)
+                layout.addWidget(wrapper.main_layout_widget)
+                self._setting_widgets[key] = wrapper
 
-        # ── Inpainting Size ──
-        self.content_layout.addSpacing(SPACE["sm"])
-        inp_row = QHBoxLayout()
-        inp_lbl = QLabel("Inpainting Size")
-        inp_lbl.setStyleSheet(
-            f"font-weight: 600; color: {c['text']}; "
-            f"font-size: {FONT['label']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        inp_row.addWidget(inp_lbl)
-        inp_row.addStretch()
-        
-        self.inp_save_btn = StyledButton("✓", variant="primary")
-        self.inp_save_btn.clicked.connect(self._save_inpainting_size)
-        self.inp_save_btn.hide()
-        inp_row.addWidget(self.inp_save_btn)
-        
-        self.inp_cancel_btn = StyledButton("✕", variant="secondary")
-        self.inp_cancel_btn.clicked.connect(self._cancel_inpainting_size)
-        self.inp_cancel_btn.hide()
-        inp_row.addWidget(self.inp_cancel_btn)
-        
-        self.inpainting_size_value = QLabel(f"{self.inpainting_size} px")
-        self.inpainting_size_value.setStyleSheet(
-            f"color: {c['text_secondary']}; font-size: {FONT['label']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        inp_row.addWidget(self.inpainting_size_value)
-        self.content_layout.addLayout(inp_row)
+        return card
 
-        self.inpainting_size_slider = QSlider(Qt.Horizontal)
-        self.inpainting_size_slider.setRange(INPAINTING_SIZE_MIN, INPAINTING_SIZE_MAX)
-        self.inpainting_size_slider.setSingleStep(INPAINTING_SIZE_STEP)
-        self.inpainting_size_slider.setValue(self.inpainting_size)
-        self.inpainting_size_slider.setStyleSheet(self._styled_slider())
-        self.inpainting_size_slider.valueChanged.connect(self._on_inpainting_size_changed)
-        self.content_layout.addWidget(self.inpainting_size_slider)
-        self.content_layout.addWidget(self._hint_label(
-            "Resolution for background inpainting."
-        ))
-        self.content_layout.addSpacing(SPACE["lg"])
+    def _toggle_advanced_panel(self):
+        """Toggle advanced settings and persist expanded state locally."""
+        self.advanced_settings_visible = not self.advanced_settings_visible
+        self.settings_manager.set_setting("ui_advanced_expanded", self.advanced_settings_visible)
+        self._update_advanced_visibility()
 
-        # ── Inpainter Model ───────────────────────────────────────────
-        inp_model_row = QHBoxLayout()
-        inp_model_lbl = QLabel("Inpainter Model")
-        inp_model_lbl.setStyleSheet(
-            f"font-weight: 600; color: {c['text']}; "
-            f"font-size: {FONT['label']['size']}px; "
-            "background-color: transparent; border: none;"
-        )
-        inp_model_row.addWidget(inp_model_lbl)
-        inp_model_row.addSpacing(SPACE["md"])
-        self.inpainter_combo = QComboBox()
-        self.inpainter_combo.setStyleSheet(self._settings_input_style())
-        self.inpainter_combo.addItem("LAMA Large (recommended)", "lama_large")
-        self.inpainter_combo.addItem("None (skip inpainting)", "none")
-        idx = self.inpainter_combo.findData(self.inpainter)
-        if idx >= 0:
-            self.inpainter_combo.setCurrentIndex(idx)
-        self.inpainter_combo.currentIndexChanged.connect(self._on_inpainter_changed)
-        inp_model_row.addWidget(self.inpainter_combo)
-        inp_model_row.addStretch()
-        self.content_layout.addLayout(inp_model_row)
-        self.content_layout.addWidget(self._hint_label(
-            "Select the AI model for filling in backgrounds."
-        ))
+    def _update_advanced_visibility(self):
+        """Syncs the advanced settings container visibility with current toggle state."""
+        if hasattr(self, "advanced_container") and self.advanced_container:
+            self.advanced_container.setVisible(self.advanced_settings_visible)
+        if hasattr(self, "advanced_toggle_btn") and self.advanced_toggle_btn:
+            self.advanced_toggle_btn.setText(
+                "Hide Advanced Settings" if self.advanced_settings_visible else "Show Advanced Settings"
+            )
 
-    # ── Settings style helpers ─────────────────────────────────────────
-    def _settings_input_style(self):
-        return styles.settings_input()
-
-    def _settings_label_style(self):
+    def _build_control(self, key: str, meta: dict) -> SettingControlWrapper:
+        """Dynamically generates QWidget layout and binds inputs into a SettingControlWrapper."""
         c = theme.c
-        return (
-            f"font-weight: 600; color: {c['text']}; "
-            f"font-size: {FONT['label']['size']}px; "
-            f"margin-top: {SPACE['xs']}px; background-color: transparent;"
-        )
+        control_type = meta["ui"]["control"]
+        label_text = meta["ui"]["label"]
+        tooltip_text = meta["ui"].get("tooltip", "")
+        default_val = meta.get("default")
+        current_val = self.settings_manager.get_setting(key)
+        
+        container = QWidget()
+        container.setStyleSheet("background-color: transparent;")
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, SPACE["xs"] // 2, 0, SPACE["xs"] // 2)
+        layout.setSpacing(SPACE["xs"])
+        
+        wrapper = SettingControlWrapper(key, container)
+        
+        # Header layout for labels/combos/etc.
+        lbl_layout = QHBoxLayout()
+        lbl_layout.setContentsMargins(0, 0, 0, 0)
+        lbl_layout.setSpacing(SPACE["sm"])
+        
+        label = QLabel(label_text)
+        label.setStyleSheet(self._settings_label_style())
+        label.setToolTip(tooltip_text)
+        lbl_layout.addWidget(label)
+        lbl_layout.addStretch()
+        
+        if control_type == "combo":
+            combo = QComboBox()
+            combo.setStyleSheet(self._settings_input_style())
+            combo.setCursor(Qt.PointingHandCursor)
+            for display_label, data_val in meta["ui"].get("options", []):
+                combo.addItem(display_label, data_val)
+            idx = combo.findData(current_val)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+            combo.currentIndexChanged.connect(lambda _, k=key: self._on_control_modified(k))
+            
+            combo.setFixedWidth(240)
+            lbl_layout.addWidget(combo)
+            wrapper.combo = combo
+            layout.addLayout(lbl_layout)
+            
+        elif control_type == "checkbox":
+            chk = QCheckBox()
+            chk.setCursor(Qt.PointingHandCursor)
+            chk.setChecked(bool(current_val))
+            chk.stateChanged.connect(lambda _, k=key: self._on_control_modified(k))
+            
+            lbl_layout.addWidget(chk)
+            wrapper.checkbox = chk
+            layout.addLayout(lbl_layout)
+            
+        elif control_type == "radio_group":
+            group = QGroupBox()
+            group.setStyleSheet("QGroupBox { border: none; margin: 0px; padding: 0px; background-color: transparent; }")
+            g_layout = QHBoxLayout(group)
+            g_layout.setContentsMargins(0, 0, 0, 0)
+            g_layout.setSpacing(SPACE["md"])
+            
+            for display_label, data_val in meta["ui"].get("options", []):
+                radio = QRadioButton(display_label)
+                radio.setCursor(Qt.PointingHandCursor)
+                radio.setProperty("val", data_val)
+                radio.setStyleSheet(f"color: {c['text']}; font-size: {FONT['body']['size']}px;")
+                radio.setChecked(current_val == data_val)
+                radio.toggled.connect(lambda checked, k=key: checked and self._on_control_modified(k))
+                g_layout.addWidget(radio)
+                wrapper.radio_buttons.append(radio)
+            
+            lbl_layout.addWidget(group)
+            layout.addLayout(lbl_layout)
+            
+        elif control_type == "segmented_theme":
+            pill_widget = QWidget()
+            pill_layout = QHBoxLayout(pill_widget)
+            pill_layout.setContentsMargins(0, 0, 0, 0)
+            pill_layout.setSpacing(SPACE["xs"])
+            
+            light_btn = QPushButton("Light")
+            light_btn.setIcon(load_icon("light_mode_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+            light_btn.setIconSize(QSize(20, 20))
+            light_btn.setCursor(Qt.PointingHandCursor)
+            
+            dark_btn = QPushButton("Dark")
+            dark_btn.setIcon(load_icon("dark_mode_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"))
+            dark_btn.setIconSize(QSize(20, 20))
+            dark_btn.setCursor(Qt.PointingHandCursor)
+            
+            def set_theme_ui(val):
+                light_btn.setStyleSheet(self._theme_pill_style(val == "light"))
+                dark_btn.setStyleSheet(self._theme_pill_style(val == "dark"))
+                
+            set_theme_ui(current_val)
+            
+            def on_theme_click(val):
+                set_theme_ui(val)
+                theme.set_mode(val)
+                self._on_control_modified(key)
+                
+            light_btn.clicked.connect(lambda: on_theme_click("light"))
+            dark_btn.clicked.connect(lambda: on_theme_click("dark"))
+            
+            pill_layout.addWidget(light_btn)
+            pill_layout.addWidget(dark_btn)
+            lbl_layout.addWidget(pill_widget)
+            
+            wrapper.combo = QComboBox()
+            wrapper.combo.addItem("light", "light")
+            wrapper.combo.addItem("dark", "dark")
+            wrapper.combo.setCurrentIndex(wrapper.combo.findData(current_val))
+            
+            layout.addLayout(lbl_layout)
+            
+        elif control_type == "shortcut_key":
+            display = QLabel(self._key_name(current_val))
+            display.setAlignment(Qt.AlignCenter)
+            display.setStyleSheet(f"""
+                QLabel {{
+                    padding: {SPACE['sm']}px {SPACE['lg']}px;
+                    border: 1px solid {c['border']};
+                    border-bottom: 3px solid {c['border']};
+                    border-radius: {SPACE['xs']}px;
+                    font-size: {FONT['label']['size']}px;
+                    font-weight: 700;
+                    background-color: {c['surface_alt']};
+                    color: {c['text']};
+                    min-width: 100px;
+                    letter-spacing: 1px;
+                }}
+            """)
+            
+            btn = _ShortcutButton("Change Shortcut")
+            
+            def on_shortcut_captured(new_key, k=key, disp=display):
+                disp.setText(self._key_name(new_key))
+                self.settings_manager.set_setting(k, new_key)
+                self._on_control_modified(k)
+                if k == "snip_shortcut_key":
+                    self.shortcut_changed.emit(new_key)
+                elif k == "continuous_shortcut_key":
+                    self.continuous_shortcut_changed.emit(new_key)
+                    
+            btn.shortcut_captured.connect(on_shortcut_captured)
+            lbl_layout.addWidget(display)
+            lbl_layout.addWidget(btn)
+            wrapper.shortcut_display = display
+            wrapper.shortcut_btn = btn
+            layout.addLayout(lbl_layout)
+            
+        elif control_type == "number_input":
+            spin = QSpinBox()
+            spin.setStyleSheet(self._settings_input_style())
+            v_meta = meta.get("validation", {})
+            spin.setRange(v_meta.get("min", 0), v_meta.get("max", 999999))
+            spin.setValue(int(current_val))
+            spin.editingFinished.connect(lambda k=key: self._on_control_modified(k))
+            spin.setFixedWidth(120)
+            
+            lbl_layout.addWidget(spin)
+            wrapper.spinbox = spin
+            layout.addLayout(lbl_layout)
+            
+        elif control_type in ("slider_spinbox", "slider_spinbox_optional"):
+            v_meta = meta.get("validation", {})
+            min_val = v_meta.get("min", 0)
+            max_val = v_meta.get("max", 100)
+            step = v_meta.get("step", 1)
+            is_float = meta["type"] == "float"
+            
+            use_key = f"use_{key}"
+            has_use_key = use_key in SETTINGS_METADATA
+            
+            if has_use_key:
+                use_label = SETTINGS_METADATA[use_key]["ui"]["label"]
+                use_chk = QCheckBox(use_label)
+                use_chk.setCursor(Qt.PointingHandCursor)
+                use_chk.setChecked(self.settings_manager.get_setting(use_key, False))
+                
+                lbl_layout.addWidget(use_chk)
+                wrapper.checkbox = use_chk
+                
+            badge = self._value_badge("")
+            lbl_layout.addWidget(badge)
+            wrapper.badge = badge
+            layout.addLayout(lbl_layout)
+            
+            slider_row = QHBoxLayout()
+            slider_row.setSpacing(SPACE["sm"])
+            
+            slider = QSlider(Qt.Horizontal)
+            slider.setStyleSheet(self._styled_slider())
+            slider.setCursor(Qt.PointingHandCursor)
+            
+            if is_float:
+                slider.setRange(int(min_val * 100), int(max_val * 100))
+                slider.setSingleStep(int(step * 100))
+                val_to_set = current_val if current_val is not None else default_val
+                slider.setValue(int(val_to_set * 100))
+            else:
+                slider.setRange(int(min_val), int(max_val))
+                slider.setSingleStep(int(step))
+                val_to_set = current_val if current_val is not None else default_val
+                slider.setValue(int(val_to_set))
+                
+            slider_row.addWidget(slider)
+            wrapper.slider = slider
+            
+            if is_float:
+                spin = QDoubleSpinBox()
+                spin.setDecimals(2)
+                spin.setSingleStep(step)
+            else:
+                spin = QSpinBox()
+                spin.setSingleStep(int(step))
+                
+            spin.setStyleSheet(self._settings_input_style())
+            spin.setRange(min_val, max_val)
+            val_to_set = current_val if current_val is not None else default_val
+            spin.setValue(val_to_set)
+            spin.setFixedWidth(100)
+            slider_row.addWidget(spin)
+            wrapper.spinbox = spin
+            
+            layout.addLayout(slider_row)
+            
+            def sync_slider_to_spinbox(slider_val, k=key, sp=spin, bd=badge, fl=is_float):
+                actual_val = slider_val / 100.0 if fl else slider_val
+                sp.blockSignals(True)
+                sp.setValue(actual_val)
+                sp.blockSignals(False)
+                if fl:
+                    bd.setText(f"{actual_val:.2f}")
+                else:
+                    bd.setText(f"{actual_val}")
+                self._on_control_modified(k)
+                
+            def sync_spinbox_to_slider(k=key, sl=slider, sp=spin, bd=badge, fl=is_float):
+                spin_val = sp.value()
+                sl.blockSignals(True)
+                sl.setValue(int(spin_val * 100) if fl else int(spin_val))
+                sl.blockSignals(False)
+                if fl:
+                    bd.setText(f"{spin_val:.2f}")
+                else:
+                    bd.setText(f"{spin_val}")
+                self._on_control_modified(k)
+                
+            slider.valueChanged.connect(lambda val: sync_slider_to_spinbox(val))
+            spin.valueChanged.connect(lambda _: sync_spinbox_to_slider())
+            
+            badge_val = current_val if current_val is not None else default_val
+            if is_float:
+                badge.setText(f"{badge_val:.2f}")
+            else:
+                badge.setText(f"{badge_val}")
+                
+            if has_use_key:
+                is_enabled = self.settings_manager.get_setting(use_key, False)
+                slider.setEnabled(is_enabled)
+                spin.setEnabled(is_enabled)
+                
+                def on_use_toggled(state, k=key, uk=use_key, sl=slider, sp=spin):
+                    enabled = state == Qt.Checked
+                    sl.setEnabled(enabled)
+                    sp.setEnabled(enabled)
+                    self.settings_manager.set_setting(uk, enabled)
+                    self._on_control_modified(k)
+                    
+                use_chk.stateChanged.connect(lambda state: on_use_toggled(state))
+       
+       # Add hint label below control
+        layout.addWidget(self._hint_label(tooltip_text))
+       
+        return wrapper
 
-    def _settings_hint_style(self):
-        c = theme.c
-        return (
-            f"color: {c['text_secondary']}; font-size: {FONT['caption']['size']}px; "
-            "background-color: transparent;"
-        )
-
-    def _section_title_style(self):
-        c = theme.c
-        return (
-            f"font-size: {FONT['body']['size']}px; font-weight: {FONT['label']['weight']}; "
-            f"color: {c['text_secondary']}; margin-top: {SPACE['md']}px; "
-            "background-color: transparent;"
-        )
-
-    def _add_section_separator(self, layout):
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(
-            f"color: {theme.c['border']}; background-color: {theme.c['border']};"
-        )
-        layout.addWidget(sep)
-
-    # ── Settings change handlers ───────────────────────────────────────
-    def _on_language_changed(self):
-        if not hasattr(self, "language_combo"):
+    def _refresh_setting_control(self, key: str):
+        """Refreshes a control's UI value in-place without rebuilding the widget layout."""
+        wrapper = self._setting_widgets.get(key)
+        if not wrapper:
             return
-        selected = self.language_combo.currentData()
-        if selected:
-            self.target_language = selected
-            from utils.settings_manager import settings_manager
-            settings_manager.set_setting("target_language", selected)
+        
+        val = self.settings_manager.get_setting(key)
+        wrapper.set_value(val)
+        wrapper.clear_error()
 
-    def _on_shortcut_captured(self, key: int):
-        self.snip_shortcut_key = key
-        if hasattr(self, "shortcut_display"):
-            self.shortcut_display.setText(self._key_name(key))
-        from utils.settings_manager import settings_manager
-        settings_manager.set_setting("snip_shortcut_key", key)
-        self.shortcut_changed.emit(key)
+        use_key = f"use_{key}"
+        if use_key in SETTINGS_METADATA and use_key in self._setting_widgets:
+            use_val = self.settings_manager.get_setting(use_key, False)
+            use_wrapper = self._setting_widgets[use_key]
+            use_wrapper.set_value(use_val)
 
-    def _on_continuous_shortcut_captured(self, key: int):
-        self.continuous_shortcut_key = key
-        if hasattr(self, "continuous_shortcut_display"):
-            self.continuous_shortcut_display.setText(self._key_name(key))
-        from utils.settings_manager import settings_manager
-        settings_manager.set_setting("continuous_shortcut_key", key)
-        self.continuous_shortcut_changed.emit(key)
-
-    def _set_continuous_mode(self, enabled: bool):
-        self.continuous_mode_enabled = enabled
-        if hasattr(self, "single_snip_btn") and hasattr(self, "continuous_snip_btn"):
-            self.single_snip_btn.setStyleSheet(self._continuous_pill_style(not enabled))
-            self.continuous_snip_btn.setStyleSheet(self._continuous_pill_style(enabled))
-        self.continuous_mode_changed.emit(enabled)
-
-    def _on_interval_editing_finished(self):
-        text = self.interval_input.text().strip()
-        try:
-            val = int(text)
-        except ValueError:
-            val = DEFAULT_CONTINUOUS_SNIP_INTERVAL
+    def _on_control_modified(self, key: str):
+        """Fires when any setting control input is modified. Validates and saves changes."""
+        wrapper = self._setting_widgets.get(key)
+        if not wrapper:
+            return
             
-        clamped = False
-        warning_msg = ""
-        if val < 100:
-            val = 100
-            clamped = True
-            warning_msg = "Min interval is 100ms"
-        elif val > 10000:
-            val = 10000
-            clamped = True
-            warning_msg = "Max interval is 10000ms"
+        new_val = wrapper.get_ui_value()
+        
+        # Build active context from other UI inputs to avoid order-dependency errors
+        context = {}
+        if key == "font_size_minimum":
+            font_size_wrapper = self._setting_widgets.get("font_size")
+            if font_size_wrapper:
+                context["font_size"] = font_size_wrapper.get_ui_value()
+                
+        is_valid, error_msg = self.settings_manager.validate_setting(key, new_val, current_ui_context=context)
+        
+        if not is_valid:
+            wrapper.show_error(error_msg)
+        else:
+            wrapper.clear_error()
+            self.settings_manager.set_validated(key, new_val)
             
-        self.interval_input.setText(str(val))
-        self.continuous_snip_interval = val
-        
-        from utils.settings_manager import settings_manager
-        settings_manager.set_setting("continuous_snip_interval", val)
-        
-        self.snip_interval_changed.emit(val)
-        
-        if clamped:
-            from PyQt5.QtWidgets import QToolTip
-            from PyQt5.QtCore import QPoint
-            QToolTip.showText(self.interval_input.mapToGlobal(QPoint(10, 10)), warning_msg, self.interval_input)
+        # Cascade validations (e.g. if Font Size changed, re-validate Minimum Font Size)
+        if key == "font_size":
+            self._on_control_modified("font_size_minimum")
 
-    def _on_detection_size_changed(self, value: int):
-        if hasattr(self, "detection_size_value"):
-            self.detection_size_value.setText(f"{value} px")
-            if hasattr(self, "det_save_btn"):
-                if value != self.detection_size:
-                    self.det_save_btn.show()
-                    self.det_cancel_btn.show()
-                else:
-                    self.det_save_btn.hide()
-                    self.det_cancel_btn.hide()
+    def _on_reset_all_settings(self):
+        """Resets all configuration preferences to defaults in-place."""
+        reply = QMessageBox.question(
+            self, "Reset All Settings?",
+            "Reset all settings to defaults? This cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.settings_manager.reset_all_settings()
+            
+            # Update all widgets in-place
+            for key in self._setting_widgets:
+                self._refresh_setting_control(key)
+                
+            self.show_toast("Settings reset successfully", "success")
 
-    def _save_detection_size(self):
-        self.detection_size = self.detection_size_slider.value()
-        self.det_save_btn.hide()
-        self.det_cancel_btn.hide()
-        from utils.settings_manager import settings_manager
-        settings_manager.set_setting("detection_size", self.detection_size)
-
-    def _cancel_detection_size(self):
-        self.detection_size_slider.setValue(self.detection_size)
-
-    def _on_box_threshold_changed(self, value: int):
-        if hasattr(self, "box_threshold_value"):
-            self.box_threshold_value.setText(f"{value / 100:.2f}")
-            if hasattr(self, "box_save_btn"):
-                if round(value / 100, 2) != self.box_threshold:
-                    self.box_save_btn.show()
-                    self.box_cancel_btn.show()
-                else:
-                    self.box_save_btn.hide()
-                    self.box_cancel_btn.hide()
-
-    def _save_box_threshold(self):
-        self.box_threshold = round(self.box_threshold_slider.value() / 100, 2)
-        self.box_save_btn.hide()
-        self.box_cancel_btn.hide()
-        from utils.settings_manager import settings_manager
-        settings_manager.set_setting("box_threshold", self.box_threshold)
-
-    def _cancel_box_threshold(self):
-        self.box_threshold_slider.setValue(int(self.box_threshold * 100))
-
-    def _on_inpainting_size_changed(self, value: int):
-        if hasattr(self, "inpainting_size_value"):
-            self.inpainting_size_value.setText(f"{value} px")
-            if hasattr(self, "inp_save_btn"):
-                if value != self.inpainting_size:
-                    self.inp_save_btn.show()
-                    self.inp_cancel_btn.show()
-                else:
-                    self.inp_save_btn.hide()
-                    self.inp_cancel_btn.hide()
-
-    def _save_inpainting_size(self):
-        self.inpainting_size = self.inpainting_size_slider.value()
-        self.inp_save_btn.hide()
-        self.inp_cancel_btn.hide()
-        from utils.settings_manager import settings_manager
-        settings_manager.set_setting("inpainting_size", self.inpainting_size)
-
-    def _cancel_inpainting_size(self):
-        self.inpainting_size_slider.setValue(self.inpainting_size)
-
-    def _on_inpainter_changed(self):
-        if hasattr(self, "inpainter_combo"):
-            self.inpainter = self.inpainter_combo.currentData()
-            from utils.settings_manager import settings_manager
-            settings_manager.set_setting("inpainter", self.inpainter)
+    def _on_reset_section(self, section_name: str):
+        """Resets dynamic section configuration preferences in-place."""
+        reply = QMessageBox.question(
+            self, f"Reset Section?",
+            f"Reset all '{SECTION_LABELS.get(section_name, section_name)}' settings to defaults?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            self.settings_manager.reset_section(section_name)
+            
+            keys_to_reset = self.settings_manager.get_keys_in_section(section_name)
+            for key in keys_to_reset:
+                self._refresh_setting_control(key)
+                
+            self.show_toast(f"'{SECTION_LABELS.get(section_name, section_name)}' reset successfully", "success")
 
     def _on_settings_profile_changed(self):
-        """Update dashboard attributes from settings manager and refresh settings UI."""
-        from utils.settings_manager import settings_manager
-        self.continuous_snip_interval = settings_manager.get_setting("continuous_snip_interval", 500)
-        self.target_language = settings_manager.get_setting("target_language", "ENG")
-        self.snip_shortcut_key = settings_manager.get_setting("snip_shortcut_key", 16777225)
-        self.continuous_shortcut_key = settings_manager.get_setting("continuous_shortcut_key", 16777240)
-        self.detection_size = settings_manager.get_setting("detection_size", 1536)
-        self.box_threshold = settings_manager.get_setting("box_threshold", 0.7)
-        self.inpainting_size = settings_manager.get_setting("inpainting_size", 2048)
-        self.inpainter = settings_manager.get_setting("inpainter", "lama_large")
-
-        # Emit updates for listeners
+        """Update settings UI components in-place on profile changes (e.g. login/logout)."""
         self.shortcut_changed.emit(self.snip_shortcut_key)
         self.continuous_shortcut_changed.emit(self.continuous_shortcut_key)
         self.snip_interval_changed.emit(self.continuous_snip_interval)
 
-        # Re-render settings if Settings tab is active
-        if getattr(self, "_current_view", None) == "settings":
-            self._render_settings_content()
+        for key in list(self._setting_widgets.keys()):
+            self._refresh_setting_control(key)
 
-    # ── Public getters ─────────────────────────────────────────────────
+    # ── Settings Properties (single source of truth in settings_manager) ──
+    @property
+    def target_language(self):
+        return self.settings_manager.get_setting("target_language")
+
+    @target_language.setter
+    def target_language(self, value):
+        self.settings_manager.set_setting("target_language", value)
+
+    @property
+    def snip_shortcut_key(self):
+        return self.settings_manager.get_setting("snip_shortcut_key")
+
+    @snip_shortcut_key.setter
+    def snip_shortcut_key(self, value):
+        self.settings_manager.set_setting("snip_shortcut_key", value)
+
+    @property
+    def continuous_shortcut_key(self):
+        return self.settings_manager.get_setting("continuous_shortcut_key")
+
+    @continuous_shortcut_key.setter
+    def continuous_shortcut_key(self, value):
+        self.settings_manager.set_setting("continuous_shortcut_key", value)
+
+    @property
+    def continuous_snip_interval(self):
+        return self.settings_manager.get_setting("continuous_snip_interval")
+
+    @continuous_snip_interval.setter
+    def continuous_snip_interval(self, value):
+        self.settings_manager.set_setting("continuous_snip_interval", value)
+
+    @property
+    def detection_size(self):
+        return self.settings_manager.get_setting("detection_size")
+
+    @detection_size.setter
+    def detection_size(self, value):
+        self.settings_manager.set_setting("detection_size", value)
+
+    @property
+    def box_threshold(self):
+        return self.settings_manager.get_setting("box_threshold")
+
+    @box_threshold.setter
+    def box_threshold(self, value):
+        self.settings_manager.set_setting("box_threshold", value)
+
+    @property
+    def inpainting_size(self):
+        return self.settings_manager.get_setting("inpainting_size")
+
+    @inpainting_size.setter
+    def inpainting_size(self, value):
+        self.settings_manager.set_setting("inpainting_size", value)
+
+    @property
+    def inpainter(self):
+        return self.settings_manager.get_setting("inpainter")
+
+    @inpainter.setter
+    def inpainter(self, value):
+        self.settings_manager.set_setting("inpainter", value)
+
     def get_target_language(self) -> str:
         return self.target_language
 
     def get_translation_config(self) -> dict:
-        return {
+        """Reads validated values on-demand to serialize the backend parameters payload."""
+        config = {
             "detector": {
-                "detection_size": self.detection_size,
-                "box_threshold": self.box_threshold,
+                "detector": self.settings_manager.get_setting("detector"),
+                "detection_size": self.settings_manager.get_setting("detection_size"),
+                "box_threshold": self.settings_manager.get_setting("box_threshold"),
+                "text_threshold": self.settings_manager.get_setting("text_threshold"),
+                "unclip_ratio": self.settings_manager.get_setting("unclip_ratio"),
+                "det_rotate": self.settings_manager.get_setting("det_rotate"),
+                "det_auto_rotate": self.settings_manager.get_setting("det_auto_rotate"),
+                "det_invert": self.settings_manager.get_setting("det_invert"),
+                "det_gamma_correct": self.settings_manager.get_setting("det_gamma_correct"),
             },
-            "translator": {"target_lang": self.target_language},
+            "translator": {
+                "target_lang": self.settings_manager.get_setting("target_language"),
+                "no_text_lang_skip": self.settings_manager.get_setting("no_text_lang_skip"),
+            },
             "inpainter": {
-                "inpainter": self.inpainter,
-                "inpainting_size": self.inpainting_size,
+                "inpainter": self.settings_manager.get_setting("inpainter"),
+                "inpainting_size": self.settings_manager.get_setting("inpainting_size"),
+                "inpainting_precision": self.settings_manager.get_setting("inpainting_precision"),
             },
+            "ocr": {
+                "ocr": self.settings_manager.get_setting("ocr"),
+                "min_text_length": self.settings_manager.get_setting("min_text_length"),
+                "ignore_bubble": self.settings_manager.get_setting("ignore_bubble"),
+                "prob": self.settings_manager.get_setting("prob") if self.settings_manager.get_setting("use_prob") else None,
+            },
+            "render": {
+                "renderer": self.settings_manager.get_setting("renderer"),
+                "font_size": self.settings_manager.get_setting("font_size") if self.settings_manager.get_setting("use_font_size") else None,
+                "font_size_minimum": self.settings_manager.get_setting("font_size_minimum"),
+                "font_size_offset": self.settings_manager.get_setting("font_size_offset"),
+                "line_spacing": self.settings_manager.get_setting("line_spacing") if self.settings_manager.get_setting("use_line_spacing") else None,
+                "disable_font_border": self.settings_manager.get_setting("disable_font_border"),
+                "alignment": self.settings_manager.get_setting("alignment"),
+                "direction": self.settings_manager.get_setting("direction"),
+                "no_hyphenation": self.settings_manager.get_setting("no_hyphenation"),
+                "rtl": self.settings_manager.get_setting("rtl"),
+            },
+            "kernel_size": self.settings_manager.get_setting("kernel_size"),
+            "mask_dilation_offset": self.settings_manager.get_setting("mask_dilation_offset"),
         }
+
+        # Expand text_case radio selection to boolean pair (uppercase/lowercase)
+        text_case = self.settings_manager.get_setting("text_case")
+        if text_case == "uppercase":
+            config["render"]["uppercase"] = True
+            config["render"]["lowercase"] = False
+        elif text_case == "lowercase":
+            config["render"]["uppercase"] = False
+            config["render"]["lowercase"] = True
+        else:  # "normal"
+            config["render"]["uppercase"] = False
+            config["render"]["lowercase"] = False
+
+        return config
+
+    @staticmethod
+    def _settings_label_style() -> str:
+        c = theme.c
+        return f"font-size: {FONT['label']['size']}px; font-weight: {FONT['label']['weight']}; color: {c['text']}; margin-top: 4px; background-color: transparent;"
+
+    @staticmethod
+    def _settings_input_style() -> str:
+        return styles.settings_input()
 
     @staticmethod
     def _key_name(key: int) -> str:

@@ -28,6 +28,7 @@ Main dashboard with folder/image management (Google Drive-style).
 """
 
 import os
+import json
 
 SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp')
 
@@ -686,7 +687,7 @@ class FolderCard(QFrame):
     delete_requested = pyqtSignal(int, str)
     rename_requested = pyqtSignal(int, str)
     move_requested = pyqtSignal(int, str)
-    image_dropped = pyqtSignal(int, int)
+    image_dropped = pyqtSignal(int, list)
     folder_dropped = pyqtSignal(int, int)
 
     def __init__(self, folder_data: dict, parent=None):
@@ -700,7 +701,7 @@ class FolderCard(QFrame):
         theme.theme_changed.connect(self._on_theme_changed)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat("application/x-snipshot-image-id") or event.mimeData().hasFormat("application/x-snipshot-folder-id"):
+        if event.mimeData().hasFormat("application/x-snipshot-image-ids") or event.mimeData().hasFormat("application/x-snipshot-folder-id"):
             event.acceptProposedAction()
             self.setProperty("dragOver", True)
             self.style().unpolish(self)
@@ -710,7 +711,7 @@ class FolderCard(QFrame):
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasFormat("application/x-snipshot-image-id") or event.mimeData().hasFormat("application/x-snipshot-folder-id"):
+        if event.mimeData().hasFormat("application/x-snipshot-image-ids") or event.mimeData().hasFormat("application/x-snipshot-folder-id"):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -726,15 +727,15 @@ class FolderCard(QFrame):
         self.style().unpolish(self)
         self.style().polish(self)
         self.update()
-        
+
         mime_data = event.mimeData()
-        if mime_data.hasFormat("application/x-snipshot-image-id"):
-            image_id_str = mime_data.data("application/x-snipshot-image-id").data().decode('utf-8')
+        if mime_data.hasFormat("application/x-snipshot-image-ids"):
+            json_bytes = mime_data.data("application/x-snipshot-image-ids").data().decode('utf-8')
             try:
-                image_id = int(image_id_str)
-                self.image_dropped.emit(self.folder_id, image_id)
+                image_ids = json.loads(json_bytes)
+                self.image_dropped.emit(self.folder_id, image_ids)
                 event.acceptProposedAction()
-            except ValueError:
+            except (ValueError, json.JSONDecodeError):
                 event.ignore()
         elif mime_data.hasFormat("application/x-snipshot-folder-id"):
             folder_id_str = mime_data.data("application/x-snipshot-folder-id").data().decode('utf-8')
@@ -916,6 +917,8 @@ class ImageCard(QFrame):
     """A card widget representing an image"""
 
     clicked = pyqtSignal(int)
+    double_clicked = pyqtSignal(int)
+    right_clicked = pyqtSignal(int, QPoint)
     delete_requested = pyqtSignal(int)
     rename_requested = pyqtSignal(int)
     move_requested = pyqtSignal(int)
@@ -924,9 +927,18 @@ class ImageCard(QFrame):
         super().__init__(parent)
         self.image_data = image_data
         self.image_id = image_data["id"]
+        self._selected = False
         self.setCursor(Qt.PointingHandCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
         self._setup_ui()
         theme.theme_changed.connect(self._on_theme_changed)
+
+    def set_selected(self, selected: bool):
+        self._selected = selected
+        self.setProperty("selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
 
     def _setup_ui(self):
         self.setFixedSize(220, 180)
@@ -937,6 +949,7 @@ class ImageCard(QFrame):
 
         # Image preview container
         self.preview_box = QFrame()
+        self.preview_box.setObjectName("preview_box")
         self.preview_box.setFixedHeight(120)
 
         preview_layout = QVBoxLayout(self.preview_box)
@@ -951,6 +964,7 @@ class ImageCard(QFrame):
 
         # Bottom info section
         self.info_section = QFrame()
+        self.info_section.setObjectName("info_section")
         info_layout = QHBoxLayout(self.info_section)
         info_layout.setContentsMargins(SPACE["sm"], SPACE["sm"], SPACE["sm"], SPACE["sm"])
         info_layout.setSpacing(SPACE["xs"])
@@ -985,24 +999,8 @@ class ImageCard(QFrame):
     def _apply_style(self):
         c = theme.c
         self.setStyleSheet(styles.image_card())
-        self.preview_box.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['bg']};
-                border-top-left-radius: 12px;
-                border-top-right-radius: 12px;
-                border-bottom-left-radius: 0px;
-                border-bottom-right-radius: 0px;
-            }}
-        """)
-        self.info_section.setStyleSheet(f"""
-            QFrame {{
-                background-color: {c['surface_alt']};
-                border-bottom-left-radius: 12px;
-                border-bottom-right-radius: 12px;
-                border-top-left-radius: 0px;
-                border-top-right-radius: 0px;
-            }}
-        """)
+        # preview_box and info_section background/border-radius are handled by QSS selectors
+        # in image_card() via ImageCard QFrame#preview_box / ImageCard QFrame#info_section
         self.name_label.setStyleSheet(
             f"font-weight: 600; color: {c['text']}; "
             f"font-size: 11px; background-color: transparent;"
@@ -1036,8 +1034,20 @@ class ImageCard(QFrame):
             if self.menu_btn.rect().contains(self.menu_btn.mapFrom(self, event.pos())):
                 return
             self.drag_start_position = event.pos()
+            self.clicked.emit(self.image_id)
         elif event.button() == Qt.RightButton:
-            self._show_context_menu(event.globalPos())
+            self.right_clicked.emit(self.image_id, event.globalPos())
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.double_clicked.emit(self.image_id)
+        super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self.double_clicked.emit(self.image_id)
+        else:
+            super().keyPressEvent(event)
 
     def mouseMoveEvent(self, event):
         if not (event.buttons() & Qt.LeftButton):
@@ -1046,24 +1056,27 @@ class ImageCard(QFrame):
             return
         if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
             return
-
-        # Limit drag and drop to unfiled images
-        if self.image_data.get("folder_id") is None:
-            self._start_drag(event)
+        self._start_drag(event)
 
     def _start_drag(self, event):
         from PyQt5.QtGui import QDrag
         from PyQt5.QtCore import QMimeData, QByteArray
 
+        if not hasattr(self, "drag_start_position"):
+            return
+        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
+            return
+
         mime_data = QMimeData()
-        image_id_str = str(self.image_data["id"])
-        mime_data.setText(image_id_str)
-        mime_data.setData("application/x-snipshot-image-id", QByteArray(image_id_str.encode('utf-8')))
+        image_ids = [self.image_id]
+        mime_data.setData(
+            "application/x-snipshot-image-ids",
+            QByteArray(json.dumps(image_ids).encode('utf-8'))
+        )
 
         drag = QDrag(self)
         drag.setMimeData(mime_data)
 
-        # Create a visually pleasing thumbnail of the image card for the drag action
         pixmap = self.grab()
         drag.setPixmap(pixmap.scaled(120, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         drag.setHotSpot(self.drag_start_position)
@@ -1073,9 +1086,6 @@ class ImageCard(QFrame):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton:
             if hasattr(self, "drag_start_position"):
-                # If released without crossing the drag threshold, trigger click (view preview)
-                if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
-                    self.clicked.emit(self.image_id)
                 del self.drag_start_position
         super().mouseReleaseEvent(event)
 
@@ -1087,7 +1097,7 @@ class ImageCard(QFrame):
         from ui.styles import get_main_stylesheet
         menu.setStyleSheet(get_main_stylesheet())
         open_action = menu.addAction("View")
-        open_action.triggered.connect(lambda: self.clicked.emit(self.image_id))
+        open_action.triggered.connect(lambda: self.double_clicked.emit(self.image_id))
         rename_action = menu.addAction("Rename")
         rename_action.triggered.connect(
             lambda: self.rename_requested.emit(self.image_id)
@@ -1245,7 +1255,7 @@ class TrashDropZone(QFrame):
 
     def dragEnterEvent(self, event):
         mime_data = event.mimeData()
-        if mime_data.hasFormat("application/x-snipshot-image-id") or mime_data.hasFormat("application/x-snipshot-folder-id"):
+        if mime_data.hasFormat("application/x-snipshot-image-ids") or mime_data.hasFormat("application/x-snipshot-folder-id"):
             event.acceptProposedAction()
             self._is_drag_over = True
             self._apply_style()
@@ -1254,7 +1264,7 @@ class TrashDropZone(QFrame):
 
     def dragMoveEvent(self, event):
         mime_data = event.mimeData()
-        if mime_data.hasFormat("application/x-snipshot-image-id") or mime_data.hasFormat("application/x-snipshot-folder-id"):
+        if mime_data.hasFormat("application/x-snipshot-image-ids") or mime_data.hasFormat("application/x-snipshot-folder-id"):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -1268,14 +1278,14 @@ class TrashDropZone(QFrame):
         self._apply_style()
 
         mime_data = event.mimeData()
-        if mime_data.hasFormat("application/x-snipshot-image-id"):
-            image_id_str = mime_data.data("application/x-snipshot-image-id").data().decode('utf-8')
+        if mime_data.hasFormat("application/x-snipshot-image-ids"):
+            json_bytes = mime_data.data("application/x-snipshot-image-ids").data().decode('utf-8')
             try:
-                image_id = int(image_id_str)
-                if hasattr(self.parent(), "_delete_image_dropped"):
-                    self.parent()._delete_image_dropped(image_id)
+                image_ids = json.loads(json_bytes)
+                if hasattr(self.parent(), "_delete_images_dropped"):
+                    self.parent()._delete_images_dropped(image_ids)
                 event.acceptProposedAction()
-            except ValueError:
+            except (ValueError, json.JSONDecodeError):
                 event.ignore()
         elif mime_data.hasFormat("application/x-snipshot-folder-id"):
             folder_id_str = mime_data.data("application/x-snipshot-folder-id").data().decode('utf-8')
@@ -1849,6 +1859,17 @@ class SettingControlWrapper:
             self.combo.setToolTip("")
 
 
+class _ContentWidget(QWidget):
+    """Content area widget that detects clicks on empty space for selection clearing."""
+    empty_clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            if self.childAt(event.pos()) is None:
+                self.empty_clicked.emit()
+        super().mousePressEvent(event)
+
+
 class DashboardWindow(QWidget):
     """
     Main dashboard with folder and image management.
@@ -1877,6 +1898,7 @@ class DashboardWindow(QWidget):
         self.current_folder_id = None
         self.current_folder_name = None
         self.active_nav = "all"
+        self.selected_image_ids = set()
         
         from utils.settings_manager import settings_manager
         self.settings_manager = settings_manager
@@ -2177,7 +2199,9 @@ class DashboardWindow(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet(f"QScrollArea {{ border: none; background-color: {c['bg']}; }}")
 
-        self.content_widget = QWidget()
+        self.content_widget = _ContentWidget()
+        self.content_widget.setStyleSheet(f"background-color: {c['bg']};")
+        self.content_widget.empty_clicked.connect(self.clear_image_selection)
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
         self.content_layout.setSpacing(SPACE["lg"])
@@ -2297,6 +2321,8 @@ class DashboardWindow(QWidget):
     def _apply_styles(self):
         """Apply or re-apply all sidebar / header / fixed-element styles."""
         c = theme.c
+        self.scroll.setStyleSheet(f"QScrollArea {{ border: none; background-color: {c['bg']}; }}")
+        self.content_widget.setStyleSheet(f"background-color: {c['bg']};")
 
         if hasattr(self, "main_splitter"):
             self.main_splitter.setStyleSheet(f"""
@@ -2585,7 +2611,7 @@ class DashboardWindow(QWidget):
         card.clicked.connect(self._on_folder_clicked)
         card.delete_requested.connect(self._on_delete_folder)
         card.rename_requested.connect(self._on_rename_folder)
-        card.image_dropped.connect(self._on_image_dropped)
+        card.image_dropped.connect(self._on_images_dropped)
         
         self.folder_grid_layout.insertWidget(0, card)
         self._folder_cards[folder["id"]] = card
@@ -2619,6 +2645,8 @@ class DashboardWindow(QWidget):
 
         card = ImageCard(image)
         card.clicked.connect(self._on_image_clicked)
+        card.double_clicked.connect(self._on_image_double_clicked)
+        card.right_clicked.connect(self.show_image_context_menu)
         card.delete_requested.connect(self._on_delete_image)
         card.rename_requested.connect(self._on_rename_image)
         card.move_requested.connect(self._on_move_image)
@@ -2632,6 +2660,8 @@ class DashboardWindow(QWidget):
         if card:
             try:
                 card.clicked.disconnect()
+                card.double_clicked.disconnect()
+                card.right_clicked.disconnect()
                 card.delete_requested.disconnect()
                 card.rename_requested.disconnect()
                 card.move_requested.disconnect()
@@ -2736,6 +2766,7 @@ class DashboardWindow(QWidget):
         self._images_expanded = True
         self._folders_container = None
         self._images_container = None
+        self.selected_image_ids.clear()
 
     def _load_all_files_async(self):
         self._start_cache_load()
@@ -2837,7 +2868,7 @@ class DashboardWindow(QWidget):
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
                 card.move_requested.connect(self._on_move_folder)
-                card.image_dropped.connect(self._on_image_dropped)
+                card.image_dropped.connect(self._on_images_dropped)
                 card.folder_dropped.connect(self._move_folder_to_folder)
                 self.folder_grid_layout.addWidget(card)
                 self._folder_cards[folder["id"]] = card
@@ -2918,7 +2949,7 @@ class DashboardWindow(QWidget):
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
                 card.move_requested.connect(self._on_move_folder)
-                card.image_dropped.connect(self._on_image_dropped)
+                card.image_dropped.connect(self._on_images_dropped)
                 card.folder_dropped.connect(self._move_folder_to_folder)
                 self.folder_grid_layout.addWidget(card)
                 self._folder_cards[folder["id"]] = card
@@ -3027,6 +3058,8 @@ class DashboardWindow(QWidget):
         for image in display_images:
             card = ImageCard(image)
             card.clicked.connect(self._on_image_clicked)
+            card.double_clicked.connect(self._on_image_double_clicked)
+            card.right_clicked.connect(self.show_image_context_menu)
             card.delete_requested.connect(self._on_delete_image)
             card.rename_requested.connect(self._on_rename_image)
             card.move_requested.connect(self._on_move_image)
@@ -3219,7 +3252,7 @@ class DashboardWindow(QWidget):
                 card.clicked.connect(self._on_folder_clicked)
                 card.delete_requested.connect(self._on_delete_folder)
                 card.rename_requested.connect(self._on_rename_folder)
-                card.image_dropped.connect(self._on_image_dropped)
+                card.image_dropped.connect(self._on_images_dropped)
                 self.folder_grid_layout.addWidget(card)
 
             folders_container_layout.addWidget(self.folder_grid)
@@ -4201,10 +4234,29 @@ class DashboardWindow(QWidget):
                 )
 
     def _on_image_clicked(self, image_id: int):
+        card = self._image_cards.get(image_id)
+        if not card:
+            return
+        ctrl_held = bool(QApplication.keyboardModifiers() & Qt.ControlModifier)
+        if ctrl_held:
+            # Ctrl+click: toggle this card without affecting others
+            if image_id in self.selected_image_ids:
+                self.selected_image_ids.discard(image_id)
+                card.set_selected(False)
+            else:
+                self.selected_image_ids.add(image_id)
+                card.set_selected(True)
+        else:
+            # Normal click: clear all, select only this one
+            self.clear_image_selection()
+            self.selected_image_ids.add(image_id)
+            card.set_selected(True)
+
+    def _on_image_double_clicked(self, image_id: int):
         image_data = self._get_cached_image(image_id)
         if not image_data:
             return
-            
+
         import time
         current_time = time.time()
         # If the signed URL was generated more than 50 minutes (3000 seconds) ago,
@@ -4223,6 +4275,90 @@ class DashboardWindow(QWidget):
         images_snapshot = list(self.all_images) if hasattr(self, "all_images") and self.all_images else [image_data]
         dialog = ImagePreviewDialog(images_snapshot, image_data, self)
         dialog.exec_()
+
+    def clear_image_selection(self):
+        for image_id in list(self.selected_image_ids):
+            card = self._image_cards.get(image_id)
+            if card:
+                card.set_selected(False)
+        self.selected_image_ids.clear()
+
+    def show_image_context_menu(self, image_id: int, pos: QPoint):
+        is_selected = image_id in self.selected_image_ids
+        is_multi = is_selected and len(self.selected_image_ids) > 1
+
+        if not is_selected:
+            self.clear_image_selection()
+            self._on_image_clicked(image_id)
+
+        menu = QMenu(self)
+        from ui.styles import get_main_stylesheet
+        menu.setStyleSheet(get_main_stylesheet())
+
+        if is_multi:
+            count = len(self.selected_image_ids)
+            move_action = menu.addAction(f"Move {count} images to Folder")
+            move_action.triggered.connect(self._on_bulk_move_images)
+            menu.addSeparator()
+            delete_action = menu.addAction(f"Delete {count} images")
+            delete_action.triggered.connect(self._on_bulk_delete_images)
+        else:
+            view_action = menu.addAction("View")
+            view_action.triggered.connect(lambda: self._on_image_double_clicked(image_id))
+            rename_action = menu.addAction("Rename")
+            rename_action.triggered.connect(lambda: self._on_rename_image(image_id))
+            move_action = menu.addAction("Move to Folder")
+            move_action.triggered.connect(lambda: self._on_move_image(image_id))
+            menu.addSeparator()
+            delete_action = menu.addAction("Delete")
+            delete_action.triggered.connect(lambda: self._on_delete_image(image_id))
+
+        menu.exec_(pos)
+
+    def _on_bulk_move_images(self):
+        if not self.selected_image_ids:
+            return
+
+        folders = self._cached_folders
+        if not folders:
+            QMessageBox.information(self, "No Folders", "Create a folder first to move images into it.")
+            return
+
+        folder_names = ["Unfiled"] + [f["name"] for f in folders]
+        folder_ids = [0] + [f["id"] for f in folders]
+
+        choice, ok = QInputDialog.getItem(
+            self, "Move to Folder",
+            f"Move {len(self.selected_image_ids)} image(s) to:",
+            folder_names, 0, False
+        )
+        if ok and choice:
+            idx = folder_names.index(choice)
+            target_folder_id = folder_ids[idx]
+            for image_id in list(self.selected_image_ids):
+                result = api_client.move_image_to_folder(image_id, folder_id=target_folder_id)
+                if result.get("success"):
+                    self._move_image_locally(image_id, target_folder_id)
+            self.selected_image_ids.clear()
+
+    def _on_bulk_delete_images(self):
+        if not self.selected_image_ids:
+            return
+
+        count = len(self.selected_image_ids)
+        reply = QMessageBox.question(
+            self, "Delete Images",
+            f"Delete {count} image(s) permanently?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            for image_id in list(self.selected_image_ids):
+                result = api_client.delete_image(image_id)
+                if result.get("success"):
+                    self._cached_images = [img for img in self._cached_images if img["id"] != image_id]
+                    self._remove_image_card_widget(image_id)
+            self.selected_image_ids.clear()
+            self._reconcile_folder_counts()
 
     def _on_new_folder(self):
         dialog = CreateFolderDialog(self)
@@ -4520,10 +4656,16 @@ class DashboardWindow(QWidget):
                     self, "Error", result.get("error", "Failed to move image")
                 )
 
-    def _on_image_dropped(self, folder_id: int, image_id: int):
+    def _on_images_dropped(self, folder_id: int, image_ids: list):
         if getattr(self, "_is_moving_image", False):
             return
         self._is_moving_image = True
+
+        # If a single selected image was dragged, expand to the full selection
+        if len(image_ids) == 1 and image_ids[0] in self.selected_image_ids:
+            effective_ids = list(self.selected_image_ids)
+        else:
+            effective_ids = image_ids
 
         # Validate that the drop target is a valid folder
         valid_folder = any(f["id"] == folder_id for f in self._cached_folders)
@@ -4531,35 +4673,53 @@ class DashboardWindow(QWidget):
             self._is_moving_image = False
             return
 
-        # Show busy feedback
         QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
-
         try:
-            result = self.api_client.move_image_to_folder(image_id, folder_id=folder_id)
-            if result.get("success"):
-                self._move_image_locally(image_id, folder_id)
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Move Failed",
-                    result.get("error", "Failed to move the image to the folder.")
-                )
+            for image_id in effective_ids:
+                result = self.api_client.move_image_to_folder(image_id, folder_id=folder_id)
+                if result.get("success"):
+                    self._move_image_locally(image_id, folder_id)
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Move Failed",
+                        result.get("error", "Failed to move the image to the folder.")
+                    )
+                    break
+            self.selected_image_ids.clear()
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"An error occurred while moving the image: {str(e)}"
-            )
+            QMessageBox.critical(self, "Error", f"An error occurred while moving the image: {str(e)}")
         finally:
             QApplication.restoreOverrideCursor()
             self._is_moving_image = False
 
-    def _delete_image_dropped(self, image_id: int):
+    def _delete_images_dropped(self, image_ids: list):
         if getattr(self, "_is_deleting_item", False):
             return
         self._is_deleting_item = True
         try:
-            self._on_delete_image(image_id)
+            # If a single selected image was dragged, expand to the full selection
+            if len(image_ids) == 1 and image_ids[0] in self.selected_image_ids:
+                effective_ids = list(self.selected_image_ids)
+            else:
+                effective_ids = image_ids
+
+            if len(effective_ids) == 1:
+                self._on_delete_image(effective_ids[0])
+            else:
+                reply = QMessageBox.question(
+                    self, "Delete Images",
+                    f"Delete {len(effective_ids)} image(s) permanently?",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if reply == QMessageBox.Yes:
+                    for image_id in effective_ids:
+                        result = api_client.delete_image(image_id)
+                        if result.get("success"):
+                            self._cached_images = [img for img in self._cached_images if img["id"] != image_id]
+                            self._remove_image_card_widget(image_id)
+                    self.selected_image_ids.clear()
+                    self._reconcile_folder_counts()
         finally:
             self._is_deleting_item = False
 
@@ -4792,6 +4952,8 @@ class DashboardWindow(QWidget):
                 for image in next_batch:
                     card = ImageCard(image)
                     card.clicked.connect(self._on_image_clicked)
+                    card.double_clicked.connect(self._on_image_double_clicked)
+                    card.right_clicked.connect(self.show_image_context_menu)
                     card.delete_requested.connect(self._on_delete_image)
                     card.rename_requested.connect(self._on_rename_image)
                     card.move_requested.connect(self._on_move_image)

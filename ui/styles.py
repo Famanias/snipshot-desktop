@@ -492,6 +492,31 @@ def image_card():
             background-color: {c['hover']};
             border-color: {c['primary']};
         }}
+        ImageCard[selected="true"] {{
+            background-color: {c['primary_light']};
+            border: 2px solid {c['primary']};
+            border-radius: 12px;
+        }}
+        ImageCard QFrame#preview_box {{
+            background-color: {c['bg']};
+            border-top-left-radius: 12px;
+            border-top-right-radius: 12px;
+            border-bottom-left-radius: 0px;
+            border-bottom-right-radius: 0px;
+        }}
+        ImageCard QFrame#info_section {{
+            background-color: {c['surface_alt']};
+            border-bottom-left-radius: 12px;
+            border-bottom-right-radius: 12px;
+            border-top-left-radius: 0px;
+            border-top-right-radius: 0px;
+        }}
+        ImageCard[selected="true"] QFrame#preview_box {{
+            background-color: transparent;
+        }}
+        ImageCard[selected="true"] QFrame#info_section {{
+            background-color: transparent;
+        }}
     """
 
 

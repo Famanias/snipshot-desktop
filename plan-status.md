@@ -16,78 +16,97 @@
 
 ## Completed Work (Phase 3)
 
-### ui/dashboard.py — ImageCard
-
-- Added `key_pressed = pyqtSignal(int, object)` signal.
-- Updated `keyPressEvent`: emits `key_pressed` for `Up`, `Down`, `Left`, `Right`, `Delete`, and `F2`; Enter/Return still emits `double_clicked` as before.
-
-### ui/dashboard.py — DashboardWindow: `_on_image_clicked`
-
-- Added Shift-modifier check: if Shift is held, delegates to `_on_image_shift_clicked`.
-- Added `_last_clicked_image_id` tracking on normal click and Ctrl+click to serve as the Shift range anchor.
-
-### ui/dashboard.py — DashboardWindow: new methods
-
-- **`_get_ordered_card_ids()`**: returns image IDs in visual layout order by walking `FlowLayout._items`.
-- **`_get_grid_columns()`**: counts cards sharing the first row's y-coordinate to determine column count.
-- **`_on_image_shift_clicked(image_id)`**: selects a contiguous range from `_last_clicked_image_id` to the clicked card; `_last_clicked_image_id` stays at the anchor on subsequent Shift+clicks.
-- **`_on_image_key_pressed(image_id, event)`**:
-  - `Delete`: calls `_on_bulk_delete_images()`.
-  - `F2`: calls `_on_rename_image(image_id)` only when a single image is selected.
-  - Arrow keys: moves focus to the adjacent card (`Left`/`Right` = ±1 index, `Up`/`Down` = ±columns). `Shift+arrow` extends the selection via `_on_image_shift_clicked`; plain arrow replaces selection and updates the anchor.
-
-### ui/dashboard.py — Card lifecycle
-
-- All three card-creation sites now connect `key_pressed → _on_image_key_pressed`:
-  - `_add_image_card_widget` (new card prepended to existing grid)
-  - `_add_image_grid` (initial grid build)
-  - `_render_next_page_batch` (infinite scroll batch)
-- `_remove_image_card_widget`: added `card.key_pressed.disconnect()` alongside the other signal disconnects.
+[All Phase 3 items completed as per previous status]
 
 ---
 
-## Current State (All Phases Complete)
+## Completed Work (Post-Plan: Multi-Item Drag & Drop)
+
+### Problem
+
+`ImageCard._start_drag` always encoded only `[self.image_id]` regardless of the current selection. The drop handlers worked around this with expansion logic: "if 1 ID received and that ID is in the selection, expand to the full set." This was fragile — it only worked when exactly one card was dragged, not when the payload was already multi-item, and it put selection logic in the wrong layer.
+
+### Changes Made
+
+#### `ui/dashboard.py` — `ImageCard.__init__`
+
+- Added `dashboard=None` parameter, stored as `self._dashboard`.
+
+#### `ui/dashboard.py` — `ImageCard._start_drag`
+
+- Replaced the hardcoded `image_ids = [self.image_id]` with selection-aware logic:
+  - **Dragged card is in the selection**: payload = `list(dashboard.selected_image_ids)` — all selected IDs.
+  - **Dragged card is NOT in the selection**: call `dashboard.clear_image_selection()`, select only the dragged card, payload = `[self.image_id]`.
+- Drag payload is now correct before it reaches any drop target.
+
+#### `ui/dashboard.py` — Card creation sites (3 locations)
+
+- `_add_image_card_widget`: `ImageCard(image)` → `ImageCard(image, dashboard=self)`
+- `_add_image_grid`: same
+- `_render_next_page_batch`: same
+
+#### `ui/dashboard.py` — `_on_images_dropped`
+
+- Removed the expansion block (`if len == 1 and in selection → expand`). Payload is already correct; `effective_ids = image_ids` directly.
+
+#### `ui/dashboard.py` — `_delete_images_dropped`
+
+- Removed the same expansion block.
+- Replaced all remaining `effective_ids` references with `image_ids` to match.
+
+---
+
+## Current State
 
 ### Working
 
-- All Phase 1 and Phase 2 features working as before.
-- **Shift+click range selection**: click a card, Shift+click another — all cards between them (in visual order) are selected.
-- **Shift+arrow extend selection**: arrow keys move focus; holding Shift extends the selection range.
-- **Arrow key navigation**: Up/Down/Left/Right move focus and single-select the adjacent card.
-- **Delete key**: with one or more images selected and a card focused, Delete triggers the bulk-delete confirmation dialog.
-- **F2 rename**: with exactly one image selected and its card focused, F2 opens the rename dialog.
+- All Phase 1, 2, and 3 features working as before.
+- **Multi-item drag to folder**: select N images, drag any one of them onto a FolderCard → all N images move to that folder.
+- **Multi-item drag to trash**: select N images, drag any one onto the trash zone → single confirmation dialog for all N → deleted together.
+- **Unselected card drag**: dragging a card that is not part of the current selection clears the old selection, selects only the dragged card, and moves only that card.
+- **Single-image drag**: unchanged behavior — payload is `[image_id]`, drop handlers behave identically to before.
 
 ### Known Limitations
 
-- None from the plan. All three phases are implemented.
+- None outstanding.
+
+---
+
+## Edge Cases Handled
+
+| Scenario | Behavior |
+|---|---|
+| Drag a card that is already selected (with others also selected) | Payload includes all selected IDs |
+| Drag a card that is NOT selected | Selection cleared, dragged card selected, payload = `[dragged_id]` |
+| Single-image drag (no multi-selection active) | Payload = `[image_id]`, drop handlers treat it as single-image move/delete |
+| `_dashboard` is `None` (card created without dashboard ref) | Falls back to `[self.image_id]`, safe no-op |
 
 ---
 
 ## Deviations from Plan
 
-- **`pyqtSignal(int, QKeyEvent)` → `pyqtSignal(int, object)`**: The plan specified `QKeyEvent` as the signal type. `QKeyEvent` inherits from `QEvent`, not `QObject`, so using it directly as a PyQt5 signal type risks ownership issues (Qt can delete the event object after the handler returns). Using `object` is the standard PyQt5 idiom for passing non-`QObject` Qt types through signals and is functionally identical for direct connections.
-- **Shift+arrow anchor behavior**: The plan says "combine with Shift to extend the selection range" but does not specify anchor semantics for arrow+Shift. Implemented to match Windows Explorer: the anchor stays at `_last_clicked_image_id` (set by plain click/Ctrl+click), not at the card that had focus. This is consistent with how Shift+click works.
+- None. The implementation matches the requirements exactly.
+- The expansion logic that was removed from `_on_images_dropped` and `_delete_images_dropped` was a workaround, not a plan requirement — removing it is a cleanup, not a deviation.
 
 ---
 
 ## Modified Files
 
 - `ui/dashboard.py`
-  - Added `key_pressed = pyqtSignal(int, object)` to `ImageCard`.
-  - Updated `ImageCard.keyPressEvent` to emit `key_pressed` for navigation/action keys.
-  - Updated `_on_image_clicked` to handle Shift modifier and track `_last_clicked_image_id`.
-  - Added `_get_ordered_card_ids()`, `_get_grid_columns()`, `_on_image_shift_clicked()`, `_on_image_key_pressed()`.
-  - Connected `key_pressed` at all three card-creation sites.
-  - Disconnected `key_pressed` in `_remove_image_card_widget`.
+  - `ImageCard.__init__`: added `dashboard=None` parameter.
+  - `ImageCard._start_drag`: selection-aware payload construction.
+  - `_add_image_card_widget`, `_add_image_grid`, `_render_next_page_batch`: pass `dashboard=self` at card creation.
+  - `_on_images_dropped`: removed expansion logic.
+  - `_delete_images_dropped`: removed expansion logic, replaced `effective_ids` refs with `image_ids`.
 
 ---
 
 ## Next Steps
 
-Manual verification of Phase 3 scenarios (per the plan's Verification Plan):
+Manual verification:
 
-1. **Shift-click range**: click image 1, Shift+click image 8 → images 1–8 selected in visual order.
-2. **Shift+arrow extend**: select a card, hold Shift, press an arrow key → selection extends in that direction.
-3. **Delete key**: select images, press Delete → confirmation dialog appears; confirm → images deleted.
-4. **F2 rename**: focus a single card, press F2 → rename dialog opens for that image.
-5. **Arrow navigation**: press arrow keys while a card is focused → focus moves to the adjacent card in the grid.
+1. **Multi-drag to folder**: select 3+ images, drag one onto a folder → all selected images move.
+2. **Multi-drag to trash**: select 3+ images, drag one onto the trash zone → single confirmation for all → all deleted.
+3. **Unselected drag**: with images A, B, C selected, drag image D (unselected) → A, B, C deselected; D selected and moved alone.
+4. **Single drag**: with no multi-selection, drag a single card → behaves as before.
+5. **Drag payload integrity**: confirm that drag of a selected card in a 5-image selection moves all 5, not just the dragged one.

@@ -924,11 +924,12 @@ class ImageCard(QFrame):
     rename_requested = pyqtSignal(int)
     move_requested = pyqtSignal(int)
 
-    def __init__(self, image_data: dict, parent=None):
+    def __init__(self, image_data: dict, dashboard=None, parent=None):
         super().__init__(parent)
         self.image_data = image_data
         self.image_id = image_data["id"]
         self._selected = False
+        self._dashboard = dashboard
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
         self._setup_ui()
@@ -1071,8 +1072,15 @@ class ImageCard(QFrame):
         if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
             return
 
+        dashboard = self._dashboard
+        if dashboard is not None and self.image_id in dashboard.selected_image_ids:
+            # Drag includes the full selection; take a snapshot — do not mutate
+            image_ids = list(dashboard.selected_image_ids)
+        else:
+            # Dragging an unselected card: payload is just this card, selection unchanged
+            image_ids = [self.image_id]
+
         mime_data = QMimeData()
-        image_ids = [self.image_id]
         mime_data.setData(
             "application/x-snipshot-image-ids",
             QByteArray(json.dumps(image_ids).encode('utf-8'))
@@ -2724,7 +2732,7 @@ class DashboardWindow(QWidget):
             self._restore_current_view()
             return
 
-        card = ImageCard(image)
+        card = ImageCard(image, dashboard=self)
         card.clicked.connect(self._on_image_clicked)
         card.double_clicked.connect(self._on_image_double_clicked)
         card.right_clicked.connect(self.show_image_context_menu)
@@ -3139,7 +3147,7 @@ class DashboardWindow(QWidget):
         
         self._image_cards = {}
         for image in display_images:
-            card = ImageCard(image)
+            card = ImageCard(image, dashboard=self)
             card.clicked.connect(self._on_image_clicked)
             card.double_clicked.connect(self._on_image_double_clicked)
             card.right_clicked.connect(self.show_image_context_menu)
@@ -4335,6 +4343,11 @@ class DashboardWindow(QWidget):
                 card.set_selected(True)
             self._last_clicked_image_id = image_id
         else:
+            # Defer if the card is already part of a multi-selection — a drag may
+            # be starting. Clearing selection here would destroy the payload before
+            # _start_drag reads it.
+            if image_id in self.selected_image_ids and len(self.selected_image_ids) > 1:
+                return
             self.clear_image_selection()
             self.selected_image_ids.add(image_id)
             card.set_selected(True)
@@ -4897,11 +4910,7 @@ class DashboardWindow(QWidget):
             return
         self._is_moving_image = True
 
-        # If a single selected image was dragged, expand to the full selection
-        if len(image_ids) == 1 and image_ids[0] in self.selected_image_ids:
-            effective_ids = list(self.selected_image_ids)
-        else:
-            effective_ids = image_ids
+        effective_ids = image_ids
 
         # Validate that the drop target is a valid folder
         valid_folder = any(f["id"] == folder_id for f in self._cached_folders)
@@ -4934,22 +4943,16 @@ class DashboardWindow(QWidget):
             return
         self._is_deleting_item = True
         try:
-            # If a single selected image was dragged, expand to the full selection
-            if len(image_ids) == 1 and image_ids[0] in self.selected_image_ids:
-                effective_ids = list(self.selected_image_ids)
-            else:
-                effective_ids = image_ids
-
-            if len(effective_ids) == 1:
-                self._on_delete_image(effective_ids[0])
+            if len(image_ids) == 1:
+                self._on_delete_image(image_ids[0])
             else:
                 reply = QMessageBox.question(
                     self, "Delete Images",
-                    f"Delete {len(effective_ids)} image(s) permanently?",
+                    f"Delete {len(image_ids)} image(s) permanently?",
                     QMessageBox.Yes | QMessageBox.No,
                 )
                 if reply == QMessageBox.Yes:
-                    for image_id in effective_ids:
+                    for image_id in image_ids:
                         result = api_client.delete_image(image_id)
                         if result.get("success"):
                             self._cached_images = [img for img in self._cached_images if img["id"] != image_id]
@@ -5186,7 +5189,7 @@ class DashboardWindow(QWidget):
             layout = self._image_grid_widget.layout()
             if layout:
                 for image in next_batch:
-                    card = ImageCard(image)
+                    card = ImageCard(image, dashboard=self)
                     card.clicked.connect(self._on_image_clicked)
                     card.double_clicked.connect(self._on_image_double_clicked)
                     card.right_clicked.connect(self.show_image_context_menu)

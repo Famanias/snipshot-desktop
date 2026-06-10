@@ -482,6 +482,12 @@ def folder_card():
 
 def image_card():
     c = _c()
+    # Convert primary color hex to RGB for use in QRubberBand style
+    primary_hex = c['primary'].lstrip('#')
+    primary_r = int(primary_hex[0:2], 16)
+    primary_g = int(primary_hex[2:4], 16)
+    primary_b = int(primary_hex[4:6], 16)
+    
     return f"""
         ImageCard {{
             background-color: {c['surface']};
@@ -516,6 +522,11 @@ def image_card():
         }}
         ImageCard[selected="true"] QFrame#info_section {{
             background-color: transparent;
+        }}
+        QRubberBand {{
+            background-color: rgba({primary_r}, {primary_g}, {primary_b}, 39);
+            border: 1px solid {c['primary']};
+            border-radius: 0px;
         }}
     """
 

@@ -39,7 +39,7 @@ from PyQt5.QtWidgets import (
     QListWidgetItem, QStackedWidget, QProgressBar, QDialog,
     QLineEdit, QTextEdit, QDialogButtonBox, QApplication, QComboBox,
     QLayout, QSplitter, QSpinBox, QDoubleSpinBox, QSlider, QToolButton,
-    QCheckBox, QRadioButton, QGroupBox,
+    QCheckBox, QRadioButton, QGroupBox, QRubberBand,
 )
 from config_metadata import (
     SETTINGS_METADATA, DEFAULT_SETTINGS, SECTION_LABELS,
@@ -1859,15 +1859,85 @@ class SettingControlWrapper:
             self.combo.setToolTip("")
 
 
-class _ContentWidget(QWidget):
-    """Content area widget that detects clicks on empty space for selection clearing."""
-    empty_clicked = pyqtSignal()
+class SelectionContainer(QWidget):
+    """Content area widget with rubber-band selection support for ImageCard items."""
+
+    def __init__(self, dashboard_window, parent=None):
+        super().__init__(parent)
+        self.dashboard = dashboard_window
+        self._rubber_band = None
+        self._drag_origin = None
+        self._drag_start_selection = set()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            if self.childAt(event.pos()) is None:
-                self.empty_clicked.emit()
+            child = self.childAt(event.pos())
+            # Check if we clicked on an ImageCard or FolderCard
+            from PyQt5.QtWidgets import QFrame
+            is_card = False
+            widget = child
+            while widget:
+                if isinstance(widget, (ImageCard, FolderCard)):
+                    is_card = True
+                    break
+                widget = widget.parentWidget() if widget else None
+
+            if not is_card:
+                # Empty space click - start marquee selection
+                self._drag_origin = event.pos()
+                
+                # If Ctrl not held, clear selection first
+                if not (event.modifiers() & Qt.ControlModifier):
+                    self.dashboard.clear_image_selection()
+                
+                # Capture current selection for additive marquee with Ctrl
+                self._drag_start_selection = self.dashboard.selected_image_ids.copy()
+                
+                # Create and show rubber band
+                self._rubber_band = QRubberBand(QRubberBand.Rectangle, self)
+                self._rubber_band.setGeometry(QRect(self._drag_origin, QSize(0, 0)))
+                self._rubber_band.show()
+        
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if not (event.buttons() & Qt.LeftButton) or self._drag_origin is None:
+            return
+        
+        # Resize rubber band to cover dragged area
+        current_pos = event.pos()
+        rect = QRect(self._drag_origin, current_pos).normalized()
+        self._rubber_band.setGeometry(rect)
+        
+        # Update selection in real-time
+        self.dashboard.update_selection_from_rect(rect, self._drag_start_selection)
+        
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self._rubber_band is not None:
+            # Hide and delete the rubber band
+            self._rubber_band.hide()
+            self._rubber_band.deleteLater()
+            self._rubber_band = None
+            
+            # Perform final selection update
+            if self._drag_origin is not None:
+                current_pos = event.pos()
+                final_rect = QRect(self._drag_origin, current_pos).normalized()
+                
+                # If the drag was very small (just a click), treat as empty-space click
+                if final_rect.width() < QApplication.startDragDistance() and \
+                   final_rect.height() < QApplication.startDragDistance():
+                    self.dashboard.clear_image_selection()
+                else:
+                    # Final selection update
+                    self.dashboard.update_selection_from_rect(final_rect, self._drag_start_selection)
+            
+            self._drag_origin = None
+            self._drag_start_selection.clear()
+        
+        super().mouseReleaseEvent(event)
 
 
 class DashboardWindow(QWidget):
@@ -1957,6 +2027,14 @@ class DashboardWindow(QWidget):
                 pass
             worker.wait(2000)            # wait up to 2s for clean exit
         setattr(self, attr, None)
+
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts like Ctrl+A for select all."""
+        if event.key() == Qt.Key_A and (event.modifiers() & Qt.ControlModifier):
+            self.select_all_images()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
 
     def _setup_ui(self):
         self.setAcceptDrops(True)
@@ -2199,9 +2277,8 @@ class DashboardWindow(QWidget):
         self.scroll.setWidgetResizable(True)
         self.scroll.setStyleSheet(f"QScrollArea {{ border: none; background-color: {c['bg']}; }}")
 
-        self.content_widget = _ContentWidget()
+        self.content_widget = SelectionContainer(self)
         self.content_widget.setStyleSheet(f"background-color: {c['bg']};")
-        self.content_widget.empty_clicked.connect(self.clear_image_selection)
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(SPACE["lg"], SPACE["lg"], SPACE["lg"], SPACE["lg"])
         self.content_layout.setSpacing(SPACE["lg"])
@@ -4282,6 +4359,58 @@ class DashboardWindow(QWidget):
             if card:
                 card.set_selected(False)
         self.selected_image_ids.clear()
+
+    def update_selection_from_rect(self, rect: QRect, drag_start_selection: set):
+        """Update selection based on intersection with a rectangle (for marquee selection).
+        
+        Args:
+            rect: The rubber-band rectangle in content widget coordinates.
+            drag_start_selection: The selection state at the start of the drag (for Ctrl+drag additive).
+        """
+        ctrl_held = bool(QApplication.keyboardModifiers() & Qt.ControlModifier)
+        
+        # Iterate over all visible ImageCard instances
+        for image_id, card in self._image_cards.items():
+            # Map card geometry to content widget coordinates
+            card_rect = card.geometry()
+            content_pos = self.content_widget.mapFromGlobal(card.mapToGlobal(QPoint(0, 0)))
+            card_rect_in_content = QRect(content_pos, card.size())
+            
+            # Check if card intersects with marquee rectangle
+            intersects = rect.intersects(card_rect_in_content)
+            
+            if ctrl_held:
+                # Additive marquee: toggle based on intersection
+                if intersects:
+                    # Toggle: if it was selected at start, deselect; else select
+                    if image_id in drag_start_selection:
+                        self.selected_image_ids.discard(image_id)
+                        card.set_selected(False)
+                    else:
+                        self.selected_image_ids.add(image_id)
+                        card.set_selected(True)
+                else:
+                    # Restore to drag_start_selection state
+                    if image_id in drag_start_selection:
+                        self.selected_image_ids.add(image_id)
+                        card.set_selected(True)
+                    else:
+                        self.selected_image_ids.discard(image_id)
+                        card.set_selected(False)
+            else:
+                # Normal marquee: select intersecting cards only
+                if intersects:
+                    self.selected_image_ids.add(image_id)
+                    card.set_selected(True)
+                else:
+                    self.selected_image_ids.discard(image_id)
+                    card.set_selected(False)
+
+    def select_all_images(self):
+        """Select all ImageCard instances in the current view."""
+        for image_id, card in self._image_cards.items():
+            self.selected_image_ids.add(image_id)
+            card.set_selected(True)
 
     def show_image_context_menu(self, image_id: int, pos: QPoint):
         is_selected = image_id in self.selected_image_ids

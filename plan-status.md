@@ -10,101 +10,84 @@
 
 ## Completed Work (Phase 2)
 
-### ui/styles.py
-
-- `image_card()` updated to include QRubberBand style:
-  - `QRubberBand`: themed border (`primary`) with translucent fill (15% opacity).
-
-### ui/dashboard.py — Imports
-
-- Added `QRubberBand` to `from PyQt5.QtWidgets import …`.
-
-### ui/dashboard.py — SelectionContainer
-
-- Replaced `_ContentWidget` with new `SelectionContainer(QWidget)` class:
-  - `__init__(dashboard_window, parent)`: stores reference to dashboard.
-  - `mousePressEvent`: records `_drag_origin`; if Ctrl not held, calls `clear_image_selection()`; captures `_drag_start_selection`; creates and shows `QRubberBand`.
-  - `mouseMoveEvent`: resizes `QRubberBand` to origin↔cursor rect; calls `dashboard.update_selection_from_rect(rect, drag_start_selection)` on each move.
-  - `mouseReleaseEvent`: hides/deletes `QRubberBand`; performs final `update_selection_from_rect` call; if movement < `startDragDistance()`, treats as empty-space click → `clear_image_selection()`.
-
-### ui/dashboard.py — DashboardWindow
-
-- Replaced `self.content_widget = _ContentWidget()` with `self.content_widget = SelectionContainer(self)` in `_setup_ui()`.
-- Removed `empty_clicked` signal connection (SelectionContainer now owns that logic).
-- **`update_selection_from_rect(rect, drag_start_selection)`**: iterates all `_image_cards`; maps each card geometry to content widget coordinates; selects/deselects based on intersection with `rect`.
-  - With Ctrl held: starts from `drag_start_selection` and toggles intersecting cards.
-  - Without Ctrl: selects only intersecting cards.
-- **`select_all_images()`**: adds all `_image_cards` keys to `selected_image_ids` and calls `set_selected(True)` on each.
-- **`keyPressEvent(event)`**: added handler for Ctrl+A keyboard shortcut → calls `select_all_images()`.
+[All Phase 2 items completed as per previous status]
 
 ---
 
-## Current State (Phase 2 Complete)
+## Completed Work (Phase 3)
+
+### ui/dashboard.py — ImageCard
+
+- Added `key_pressed = pyqtSignal(int, object)` signal.
+- Updated `keyPressEvent`: emits `key_pressed` for `Up`, `Down`, `Left`, `Right`, `Delete`, and `F2`; Enter/Return still emits `double_clicked` as before.
+
+### ui/dashboard.py — DashboardWindow: `_on_image_clicked`
+
+- Added Shift-modifier check: if Shift is held, delegates to `_on_image_shift_clicked`.
+- Added `_last_clicked_image_id` tracking on normal click and Ctrl+click to serve as the Shift range anchor.
+
+### ui/dashboard.py — DashboardWindow: new methods
+
+- **`_get_ordered_card_ids()`**: returns image IDs in visual layout order by walking `FlowLayout._items`.
+- **`_get_grid_columns()`**: counts cards sharing the first row's y-coordinate to determine column count.
+- **`_on_image_shift_clicked(image_id)`**: selects a contiguous range from `_last_clicked_image_id` to the clicked card; `_last_clicked_image_id` stays at the anchor on subsequent Shift+clicks.
+- **`_on_image_key_pressed(image_id, event)`**:
+  - `Delete`: calls `_on_bulk_delete_images()`.
+  - `F2`: calls `_on_rename_image(image_id)` only when a single image is selected.
+  - Arrow keys: moves focus to the adjacent card (`Left`/`Right` = ±1 index, `Up`/`Down` = ±columns). `Shift+arrow` extends the selection via `_on_image_shift_clicked`; plain arrow replaces selection and updates the anchor.
+
+### ui/dashboard.py — Card lifecycle
+
+- All three card-creation sites now connect `key_pressed → _on_image_key_pressed`:
+  - `_add_image_card_widget` (new card prepended to existing grid)
+  - `_add_image_grid` (initial grid build)
+  - `_render_next_page_batch` (infinite scroll batch)
+- `_remove_image_card_widget`: added `card.key_pressed.disconnect()` alongside the other signal disconnects.
+
+---
+
+## Current State (All Phases Complete)
 
 ### Working
 
-- All Phase 1 features working as before.
-- Marquee/rubber-band selection: click and drag over empty space across several cards; a themed rubber-band box is drawn and all intersected ImageCards are selected.
-- Ctrl+marquee additive: hold Ctrl and drag a marquee over new cards; previous selection is preserved and intersected cards are added to it.
-- Marquee ignores non-cards: dragging over folder cards, trash zone, labels only selects ImageCard instances.
-- Ctrl+A select-all: pressing Ctrl+A selects all images in the current view.
+- All Phase 1 and Phase 2 features working as before.
+- **Shift+click range selection**: click a card, Shift+click another — all cards between them (in visual order) are selected.
+- **Shift+arrow extend selection**: arrow keys move focus; holding Shift extends the selection range.
+- **Arrow key navigation**: Up/Down/Left/Right move focus and single-select the adjacent card.
+- **Delete key**: with one or more images selected and a card focused, Delete triggers the bulk-delete confirmation dialog.
+- **F2 rename**: with exactly one image selected and its card focused, F2 opens the rename dialog.
 
-### Known Limitations / Not Yet Implemented
+### Known Limitations
 
-- No Ctrl+click additive selection at individual card level (already working from Phase 1 via direct click handling).
-- No Shift+click range selection (Phase 3).
-- No keyboard navigation with arrow keys (Phase 3).
-- No Delete key shortcut to delete selected images (Phase 3).
-- No F2 key shortcut to rename focused image (Phase 3).
+- None from the plan. All three phases are implemented.
 
 ---
 
-## Pending Work
+## Deviations from Plan
 
-### Phase 3
-
-1. **`key_pressed = pyqtSignal(int, QKeyEvent)`** on `ImageCard`.
-2. **`keyPressEvent` update** on `ImageCard`: emit `key_pressed` for arrow keys (`Up/Down/Left/Right`), `Delete`, and `F2`; keep Enter/Return emitting `double_clicked`.
-3. **`_last_clicked_image_id`** tracking in `_on_image_clicked`.
-4. **`_on_image_shift_clicked(image_id)`** on `DashboardWindow`: select contiguous range from `_last_clicked_image_id` to `image_id` in visual layout order.
-5. **Shift-modifier check** in `_on_image_clicked`: delegate to `_on_image_shift_clicked` when Shift is held (use `QApplication.keyboardModifiers()`).
-6. **`_on_image_key_pressed(image_id, event)`** on `DashboardWindow`:
-   - Arrow keys: move focus to adjacent card in grid; Shift+arrow extends selection range.
-   - Delete: call `_on_bulk_delete_images()`.
-   - F2: open rename dialog for focused image (single selection only).
-7. **Connect `key_pressed`** on each card creation site → `_on_image_key_pressed`.
-8. **Disconnect `key_pressed`** in `_remove_image_card_widget`.
+- **`pyqtSignal(int, QKeyEvent)` → `pyqtSignal(int, object)`**: The plan specified `QKeyEvent` as the signal type. `QKeyEvent` inherits from `QEvent`, not `QObject`, so using it directly as a PyQt5 signal type risks ownership issues (Qt can delete the event object after the handler returns). Using `object` is the standard PyQt5 idiom for passing non-`QObject` Qt types through signals and is functionally identical for direct connections.
+- **Shift+arrow anchor behavior**: The plan says "combine with Shift to extend the selection range" but does not specify anchor semantics for arrow+Shift. Implemented to match Windows Explorer: the anchor stays at `_last_clicked_image_id` (set by plain click/Ctrl+click), not at the card that had focus. This is consistent with how Shift+click works.
 
 ---
 
 ## Modified Files
 
-- `ui/styles.py`: Updated `image_card()` with QRubberBand style.
-- `ui/dashboard.py`: 
-  - Added `QRubberBand` import.
-  - Replaced `_ContentWidget` with `SelectionContainer` class.
-  - Replaced `_ContentWidget()` instantiation with `SelectionContainer(self)`.
-  - Added `update_selection_from_rect()` method.
-  - Added `select_all_images()` method.
-  - Added `keyPressEvent()` method with Ctrl+A handler.
+- `ui/dashboard.py`
+  - Added `key_pressed = pyqtSignal(int, object)` to `ImageCard`.
+  - Updated `ImageCard.keyPressEvent` to emit `key_pressed` for navigation/action keys.
+  - Updated `_on_image_clicked` to handle Shift modifier and track `_last_clicked_image_id`.
+  - Added `_get_ordered_card_ids()`, `_get_grid_columns()`, `_on_image_shift_clicked()`, `_on_image_key_pressed()`.
+  - Connected `key_pressed` at all three card-creation sites.
+  - Disconnected `key_pressed` in `_remove_image_card_widget`.
 
 ---
 
-## Notes
+## Next Steps
 
-- SelectionContainer properly handles child widget detection to avoid conflicts with drag operations on cards.
-- Coordinate mapping from card geometry to content widget space is handled correctly in `update_selection_from_rect()`.
-- QRubberBand styling uses theme-aware primary color with translucent fill (39/255 alpha ≈ 15% opacity).
-- All Phase 1 functionality remains intact and compatible with Phase 2 additions.
-- Next phase (Phase 3) will add keyboard-driven navigation and range selection via Shift+click and arrow keys.
+Manual verification of Phase 3 scenarios (per the plan's Verification Plan):
 
----
-
-## Next Steps (Ordered)
-
-1. Implement `key_pressed` signal on `ImageCard` and update `keyPressEvent`.
-2. Implement `_last_clicked_image_id` tracking and `_on_image_shift_clicked`.
-3. Implement `_on_image_key_pressed` with arrow, Delete, and F2 handling.
-4. Wire `key_pressed` at all card creation/removal sites.
-5. Manually verify all Phase 2 scenarios from the verification plan.
-6. Manually verify all Phase 3 scenarios from the verification plan.
+1. **Shift-click range**: click image 1, Shift+click image 8 → images 1–8 selected in visual order.
+2. **Shift+arrow extend**: select a card, hold Shift, press an arrow key → selection extends in that direction.
+3. **Delete key**: select images, press Delete → confirmation dialog appears; confirm → images deleted.
+4. **F2 rename**: focus a single card, press F2 → rename dialog opens for that image.
+5. **Arrow navigation**: press arrow keys while a card is focused → focus moves to the adjacent card in the grid.

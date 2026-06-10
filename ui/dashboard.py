@@ -919,6 +919,7 @@ class ImageCard(QFrame):
     clicked = pyqtSignal(int)
     double_clicked = pyqtSignal(int)
     right_clicked = pyqtSignal(int, QPoint)
+    key_pressed = pyqtSignal(int, object)
     delete_requested = pyqtSignal(int)
     rename_requested = pyqtSignal(int)
     move_requested = pyqtSignal(int)
@@ -1046,6 +1047,9 @@ class ImageCard(QFrame):
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
             self.double_clicked.emit(self.image_id)
+        elif event.key() in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right,
+                             Qt.Key_Delete, Qt.Key_F2):
+            self.key_pressed.emit(self.image_id, event)
         else:
             super().keyPressEvent(event)
 
@@ -2724,6 +2728,7 @@ class DashboardWindow(QWidget):
         card.clicked.connect(self._on_image_clicked)
         card.double_clicked.connect(self._on_image_double_clicked)
         card.right_clicked.connect(self.show_image_context_menu)
+        card.key_pressed.connect(self._on_image_key_pressed)
         card.delete_requested.connect(self._on_delete_image)
         card.rename_requested.connect(self._on_rename_image)
         card.move_requested.connect(self._on_move_image)
@@ -2739,6 +2744,7 @@ class DashboardWindow(QWidget):
                 card.clicked.disconnect()
                 card.double_clicked.disconnect()
                 card.right_clicked.disconnect()
+                card.key_pressed.disconnect()
                 card.delete_requested.disconnect()
                 card.rename_requested.disconnect()
                 card.move_requested.disconnect()
@@ -3137,6 +3143,7 @@ class DashboardWindow(QWidget):
             card.clicked.connect(self._on_image_clicked)
             card.double_clicked.connect(self._on_image_double_clicked)
             card.right_clicked.connect(self.show_image_context_menu)
+            card.key_pressed.connect(self._on_image_key_pressed)
             card.delete_requested.connect(self._on_delete_image)
             card.rename_requested.connect(self._on_rename_image)
             card.move_requested.connect(self._on_move_image)
@@ -4314,20 +4321,24 @@ class DashboardWindow(QWidget):
         card = self._image_cards.get(image_id)
         if not card:
             return
-        ctrl_held = bool(QApplication.keyboardModifiers() & Qt.ControlModifier)
-        if ctrl_held:
-            # Ctrl+click: toggle this card without affecting others
+        modifiers = QApplication.keyboardModifiers()
+        shift_held = bool(modifiers & Qt.ShiftModifier)
+        ctrl_held = bool(modifiers & Qt.ControlModifier)
+        if shift_held:
+            self._on_image_shift_clicked(image_id)
+        elif ctrl_held:
             if image_id in self.selected_image_ids:
                 self.selected_image_ids.discard(image_id)
                 card.set_selected(False)
             else:
                 self.selected_image_ids.add(image_id)
                 card.set_selected(True)
+            self._last_clicked_image_id = image_id
         else:
-            # Normal click: clear all, select only this one
             self.clear_image_selection()
             self.selected_image_ids.add(image_id)
             card.set_selected(True)
+            self._last_clicked_image_id = image_id
 
     def _on_image_double_clicked(self, image_id: int):
         image_data = self._get_cached_image(image_id)
@@ -4411,6 +4422,102 @@ class DashboardWindow(QWidget):
         for image_id, card in self._image_cards.items():
             self.selected_image_ids.add(image_id)
             card.set_selected(True)
+
+    def _get_ordered_card_ids(self) -> list:
+        """Return image IDs in visual layout order (left-to-right, top-to-bottom)."""
+        if not self._image_grid_widget or not self._image_grid_widget.layout():
+            return list(self._image_cards.keys())
+        layout = self._image_grid_widget.layout()
+        result = []
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item and item.widget() and isinstance(item.widget(), ImageCard):
+                result.append(item.widget().image_id)
+        return result
+
+    def _get_grid_columns(self) -> int:
+        """Estimate the number of columns in the image grid from card geometries."""
+        if not self._image_grid_widget or not self._image_grid_widget.layout():
+            return 1
+        layout = self._image_grid_widget.layout()
+        if layout.count() == 0:
+            return 1
+        first_item = layout.itemAt(0)
+        if not first_item or not first_item.widget():
+            return 1
+        first_y = first_item.widget().geometry().y()
+        cols = 0
+        for i in range(layout.count()):
+            item = layout.itemAt(i)
+            if item and item.widget():
+                if item.widget().geometry().y() == first_y:
+                    cols += 1
+                else:
+                    break
+        return max(1, cols)
+
+    def _on_image_shift_clicked(self, image_id: int):
+        """Select a contiguous range from the last-clicked anchor to image_id."""
+        ordered_ids = self._get_ordered_card_ids()
+        anchor = getattr(self, '_last_clicked_image_id', None)
+        if anchor is None or anchor not in ordered_ids or image_id not in ordered_ids:
+            self.clear_image_selection()
+            card = self._image_cards.get(image_id)
+            if card:
+                self.selected_image_ids.add(image_id)
+                card.set_selected(True)
+            self._last_clicked_image_id = image_id
+            return
+        start_idx = ordered_ids.index(anchor)
+        end_idx = ordered_ids.index(image_id)
+        if start_idx > end_idx:
+            start_idx, end_idx = end_idx, start_idx
+        self.clear_image_selection()
+        for rid in ordered_ids[start_idx:end_idx + 1]:
+            card = self._image_cards.get(rid)
+            if card:
+                self.selected_image_ids.add(rid)
+                card.set_selected(True)
+        # _last_clicked_image_id stays at the anchor; Shift+click extends from it
+
+    def _on_image_key_pressed(self, image_id: int, event):
+        """Handle key events forwarded from focused ImageCard instances."""
+        key = event.key()
+        shift_held = bool(event.modifiers() & Qt.ShiftModifier)
+
+        if key == Qt.Key_Delete:
+            self._on_bulk_delete_images()
+            return
+
+        if key == Qt.Key_F2:
+            if len(self.selected_image_ids) == 1:
+                self._on_rename_image(image_id)
+            return
+
+        if key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+            ordered_ids = self._get_ordered_card_ids()
+            if image_id not in ordered_ids:
+                return
+            current_idx = ordered_ids.index(image_id)
+            if key == Qt.Key_Left:
+                target_idx = current_idx - 1
+            elif key == Qt.Key_Right:
+                target_idx = current_idx + 1
+            else:
+                cols = self._get_grid_columns()
+                target_idx = current_idx - cols if key == Qt.Key_Up else current_idx + cols
+            if 0 <= target_idx < len(ordered_ids):
+                target_id = ordered_ids[target_idx]
+                target_card = self._image_cards.get(target_id)
+                if target_card:
+                    target_card.setFocus()
+                    if shift_held:
+                        self._on_image_shift_clicked(target_id)
+                    else:
+                        self.clear_image_selection()
+                        self.selected_image_ids.add(target_id)
+                        target_card.set_selected(True)
+                        self._last_clicked_image_id = target_id
 
     def show_image_context_menu(self, image_id: int, pos: QPoint):
         is_selected = image_id in self.selected_image_ids
@@ -5083,6 +5190,7 @@ class DashboardWindow(QWidget):
                     card.clicked.connect(self._on_image_clicked)
                     card.double_clicked.connect(self._on_image_double_clicked)
                     card.right_clicked.connect(self.show_image_context_menu)
+                    card.key_pressed.connect(self._on_image_key_pressed)
                     card.delete_requested.connect(self._on_delete_image)
                     card.rename_requested.connect(self._on_rename_image)
                     card.move_requested.connect(self._on_move_image)

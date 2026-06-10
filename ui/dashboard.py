@@ -332,14 +332,24 @@ class ImagePreviewDialog(QDialog):
 
     _image_cache = {}
 
-    def __init__(self, image_data: dict, parent=None):
+    def __init__(self, images: list, current_image: dict, parent=None):
         super().__init__(parent)
-        self.image_data = image_data
-        self.setWindowTitle(image_data.get("filename", "Image Preview"))
+        self.images = images
+        self.image_data = current_image
+        self.setWindowTitle(current_image.get("filename", "Image Preview"))
         self.setMinimumSize(600, 500)
         self.resize(800, 600)
         self.loader = None
+        self.request_id = 0
+        self.prefetch_workers = {}
+
+        self.current_index = next(
+            (i for i, img in enumerate(self.images) if img["id"] == current_image["id"]),
+            -1
+        )
+
         self._setup_ui()
+        self._update_navigation()
         self._load_image()
 
     def _setup_ui(self):
@@ -374,6 +384,32 @@ class ImagePreviewDialog(QDialog):
         self.progress.setStyleSheet(styles.progress_bar_lg())
         layout.addWidget(self.progress)
 
+        # Navigation controls
+        self.nav_layout = QHBoxLayout()
+        self.nav_layout.setContentsMargins(0, 0, 0, 0)
+        self.nav_layout.setSpacing(SPACE["md"])
+
+        self.prev_btn = StyledButton("< Previous", variant="secondary")
+        self.prev_btn.clicked.connect(self._on_prev_clicked)
+        self.nav_layout.addWidget(self.prev_btn)
+
+        self.nav_layout.addStretch()
+
+        self.counter_label = QLabel()
+        self.counter_label.setAlignment(Qt.AlignCenter)
+        self.counter_label.setStyleSheet(
+            f"color: {c['text_secondary']}; font-size: {FONT['body']['size']}px; font-weight: 500; background-color: transparent;"
+        )
+        self.nav_layout.addWidget(self.counter_label)
+
+        self.nav_layout.addStretch()
+
+        self.next_btn = StyledButton("Next >", variant="secondary")
+        self.next_btn.clicked.connect(self._on_next_clicked)
+        self.nav_layout.addWidget(self.next_btn)
+
+        layout.addLayout(self.nav_layout)
+
         # Info section
         info_layout = QHBoxLayout()
 
@@ -397,6 +433,11 @@ class ImagePreviewDialog(QDialog):
         layout.addLayout(info_layout)
 
     def _load_image(self):
+        self.request_id += 1
+        req_id = self.request_id
+
+        self.original_pixmap = None
+
         url = self.image_data.get("public_url")
         if not url:
             self.image_label.setText("No image URL available")
@@ -404,15 +445,21 @@ class ImagePreviewDialog(QDialog):
             return
 
         if url in self._image_cache:
-            self._on_image_loaded(self._image_cache[url])
+            self._on_image_loaded(self._image_cache[url], req_id)
             return
 
+        self.progress.show()
+        self.image_label.setText("Loading...")
+
         self.loader = ImageLoaderWorker(url)
-        self.loader.finished.connect(self._on_image_loaded)
-        self.loader.error.connect(self._on_load_error)
+        self.loader.finished.connect(lambda data, r_id=req_id: self._on_image_loaded(data, r_id))
+        self.loader.error.connect(lambda err, r_id=req_id: self._on_load_error(err, r_id))
         self.loader.start()
 
-    def _on_image_loaded(self, data: bytes):
+    def _on_image_loaded(self, data: bytes, req_id: int):
+        if req_id != self.request_id:
+            return
+
         self.progress.hide()
         url = self.image_data.get("public_url")
         if url:
@@ -429,15 +476,107 @@ class ImagePreviewDialog(QDialog):
             )
             self.image_label.setPixmap(scaled)
             self.original_pixmap = pixmap
+
+            # Start prefetching adjacent images on successful load
+            self._prefetch_adjacent_images()
         else:
             self.image_label.setText("Failed to decode image")
 
-    def _on_load_error(self, error: str):
+    def _on_load_error(self, error: str, req_id: int):
+        if req_id != self.request_id:
+            return
+
         self.progress.hide()
         self.image_label.setText(f"Failed to load image:\n{error}")
         self.image_label.setStyleSheet(
             f"color: {theme.c['error']}; padding: {SPACE['lg']}px; background-color: transparent;"
         )
+
+    def _on_prev_clicked(self):
+        if self.current_index > 0:
+            self._navigate_to_image(self.current_index - 1)
+
+    def _on_next_clicked(self):
+        if self.current_index < len(self.images) - 1:
+            self._navigate_to_image(self.current_index + 1)
+
+    def _navigate_to_image(self, index: int):
+        self.current_index = index
+        self.image_data = self.images[index]
+        self.setWindowTitle(self.image_data.get("filename", "Image Preview"))
+        self.filename_label.setText(self.image_data.get("filename", "Unknown"))
+
+        self._refresh_signed_url_if_needed()
+        self._update_navigation()
+        self._load_image()
+
+    def _update_navigation(self):
+        if self.current_index == -1 or not self.images:
+            self.prev_btn.setEnabled(False)
+            self.next_btn.setEnabled(False)
+            self.counter_label.setText("")
+            return
+
+        self.prev_btn.setEnabled(self.current_index > 0)
+        self.next_btn.setEnabled(self.current_index < len(self.images) - 1)
+        self.counter_label.setText(f"Image {self.current_index + 1} of {len(self.images)}")
+
+    def _refresh_signed_url_if_needed(self):
+        import time
+        current_time = time.time()
+        # If the signed URL was generated more than 50 minutes (3000 seconds) ago,
+        # or if there is no signed URL, refresh it.
+        if current_time - self.image_data.get("_signed_at", 0) > 3000 or not self.image_data.get("public_url"):
+            try:
+                parent = self.parent()
+                if parent and hasattr(parent, "api_client"):
+                    res = parent.api_client.get_image(self.image_data["id"])
+                    if res.get("success") and res.get("data"):
+                        self.image_data.update(res.get("data"))
+                        self.image_data["_signed_at"] = current_time
+
+                        # Also update the parent's image cache in-place
+                        if hasattr(parent, "_get_cached_image"):
+                            cached_img = parent._get_cached_image(self.image_data["id"])
+                            if cached_img:
+                                cached_img.update(res.get("data"))
+                                cached_img["_signed_at"] = current_time
+                    else:
+                        print(f"Warning: Failed to refresh signed URL: {res.get('error')}")
+            except Exception as e:
+                print(f"Error: Exception while retrieving signed URL: {e}")
+
+    def _prefetch_adjacent_images(self):
+        for offset in (1, -1):
+            target_idx = self.current_index + offset
+            if 0 <= target_idx < len(self.images):
+                target_img = self.images[target_idx]
+                target_url = target_img.get("public_url")
+                if target_url and target_url not in self._image_cache and target_url not in self.prefetch_workers:
+                    worker = ImageLoaderWorker(target_url)
+                    def on_prefetched(data, url=target_url):
+                        self._image_cache[url] = data
+                        if url in self.prefetch_workers:
+                            del self.prefetch_workers[url]
+
+                    def on_prefetch_error(err, url=target_url):
+                        if url in self.prefetch_workers:
+                            del self.prefetch_workers[url]
+
+                    worker.finished.connect(on_prefetched)
+                    worker.error.connect(on_prefetch_error)
+                    self.prefetch_workers[target_url] = worker
+                    worker.start()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Left:
+            self._on_prev_clicked()
+        elif event.key() == Qt.Key_Right:
+            self._on_next_clicked()
+        elif event.key() == Qt.Key_Escape:
+            self.accept()
+        else:
+            super().keyPressEvent(event)
 
     def _open_in_browser(self):
         import os
@@ -462,6 +601,13 @@ class ImagePreviewDialog(QDialog):
             self.image_label.setPixmap(scaled)
 
     def closeEvent(self, event):
+        # Clean up prefetch workers
+        for worker in list(self.prefetch_workers.values()):
+            if worker.isRunning():
+                worker.terminate()
+                worker.wait()
+        self.prefetch_workers.clear()
+
         if self.loader and self.loader.isRunning():
             self.loader.terminate()
             self.loader.wait()
@@ -4074,7 +4220,8 @@ class DashboardWindow(QWidget):
             except Exception as e:
                 print(f"Error: Exception while retrieving signed URL for image {image_id}: {e}")
 
-        dialog = ImagePreviewDialog(image_data, self)
+        images_snapshot = list(self.all_images) if hasattr(self, "all_images") and self.all_images else [image_data]
+        dialog = ImagePreviewDialog(images_snapshot, image_data, self)
         dialog.exec_()
 
     def _on_new_folder(self):

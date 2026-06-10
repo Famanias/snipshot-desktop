@@ -296,7 +296,7 @@ class LoginWindow(QWidget):
         cl.addSpacing(SPACE["md"])
 
         # Offline mode button — secondary, no emoji
-        self.offline_mode_btn = StyledButton("Use Offline Mode", variant="secondary")
+        self.offline_mode_btn = StyledButton("Use Local Mode", variant="secondary")
         self.offline_mode_btn.setMinimumHeight(44)
         self.offline_mode_btn.clicked.connect(self._on_offline_mode)
         cl.addWidget(self.offline_mode_btn)

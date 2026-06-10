@@ -45,6 +45,7 @@ pyinstaller `
     --hidden-import PyQt5.sip `
     --hidden-import keyring.backends.Windows `
     --hidden-import supabase `
+    --hidden-import numpy `
     --hidden-import gotrue `
     --hidden-import postgrest `
     --hidden-import storage3 `

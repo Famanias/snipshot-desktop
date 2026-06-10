@@ -15,6 +15,7 @@ python-dotenv>=1.0.0
 
 # Image processing
 Pillow>=10.0.0
+numpy>=1.20.0
 
 # Direct Supabase connection (replaces database_api server)
 supabase>=2.0.0

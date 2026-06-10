@@ -26,9 +26,9 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, QThread, QBuffer, QIODevice,
-    QPropertyAnimation, QEasingCurve,
+    QPropertyAnimation, QEasingCurve, QTimer,
 )
-from PyQt5.QtGui import QPixmap, QPainterPath, QRegion, QBitmap, QPainter, QColor
+from PyQt5.QtGui import QPixmap, QPainterPath, QRegion, QBitmap, QPainter, QColor, QImage
 
 from api import api_client
 from config import DEFAULT_TRANSLATION_CONFIG
@@ -105,6 +105,68 @@ class SaveWorker(QThread):
             self.error.emit(str(e))
 
 
+def validate_qimage(image: QImage) -> tuple:
+    """
+    Returns (True, "", "") if image is acceptable, otherwise (False, title, message).
+    Safe to call from background threads.
+    """
+    import numpy as np
+
+    # ── 1. Resolution check ─────────────────────────────
+    min_width, min_height = 300, 300
+    if image.width() < min_width or image.height() < min_height:
+        return (
+            False,
+            "Image Too Small",
+            f"Image resolution too low ({image.width()}x{image.height()}).\n"
+            f"Minimum required is {min_width}x{min_height}."
+        )
+
+    # Convert to standard format for analysis
+    image = image.convertToFormat(4)  # Format_ARGB32
+
+    width = image.width()
+    height = image.height()
+
+    ptr = image.bits()
+    ptr.setsize(image.byteCount())
+    arr = np.frombuffer(ptr, np.uint8).reshape(height, width, 4)
+
+    # ── 2. Blank image detection ────────────────────────
+    gray = arr[..., :3].mean(axis=2)
+
+    brightness = gray.mean()
+    contrast = gray.std()
+
+    # If almost uniform or too dark/bright
+    if brightness < 10 or brightness > 245 or contrast < 5:
+        return (
+            False,
+            "Blank Image Detected",
+            "The captured image appears to be blank or unreadable."
+        )
+
+    # ── 3. Blur detection (variance of Laplacian) ───────
+    # Simple edge detection approximation (no OpenCV required)
+    laplacian = (
+        np.abs(gray[1:-1, 1:-1] - gray[:-2, 1:-1]) +
+        np.abs(gray[1:-1, 1:-1] - gray[2:, 1:-1]) +
+        np.abs(gray[1:-1, 1:-1] - gray[1:-1, :-2]) +
+        np.abs(gray[1:-1, 1:-1] - gray[1:-1, 2:])
+    )
+
+    blur_score = laplacian.var()
+
+    if blur_score < 15:  # tune this depending on device
+        return (
+            False,
+            "Image Too Blurry",
+            "The captured image is too blurry. Please retake the screenshot."
+        )
+
+    return True, "", ""
+
+
 class TranslationWindow(QDialog):
     """
     Window shown during/after translation.
@@ -126,6 +188,11 @@ class TranslationWindow(QDialog):
         self.setModal(True)
 
         self.captured_pixmap = captured_pixmap
+
+        if not self._validate_image(self.captured_pixmap):
+            QTimer.singleShot(0, self.reject)
+            return
+
         self.target_language = target_language
         self.translation_config = translation_config
         self.translated_bytes = None
@@ -241,6 +308,16 @@ class TranslationWindow(QDialog):
         layout.addLayout(button_layout)
 
     # ── Helpers ────────────────────────────────────────────────────────
+
+    def _validate_image(self, pixmap: QPixmap) -> bool:
+        """
+        Returns True if image is acceptable, otherwise shows error and returns False.
+        """
+        success, title, message = validate_qimage(pixmap.toImage())
+        if not success:
+            QMessageBox.warning(self, title, message)
+            return False
+        return True
 
     @staticmethod
     def _round_pixmap(pixmap: QPixmap, radius: int) -> QPixmap:

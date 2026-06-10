@@ -239,7 +239,21 @@ class QueuedTranslationWorker(QThread):
         try:
             import copy
             from config import DEFAULT_TRANSLATION_CONFIG
-            
+            from PyQt5.QtGui import QImage
+            from ui.translation import validate_qimage
+
+            # Step 0: Validate image quality
+            self.progress.emit("translating", 5)
+            img = QImage()
+            if not img.loadFromData(self.image_bytes):
+                self.error.emit("Failed to parse image data")
+                return
+
+            success, error_title, error_msg = validate_qimage(img)
+            if not success:
+                self.error.emit(f"Validation failed: {error_title} - {error_msg}")
+                return
+
             # Step 1: Translate
             self.progress.emit("translating", 10)
             

@@ -71,7 +71,7 @@ SETTINGS_METADATA = {
         }
     },
     "continuous_shortcut_key": {
-        "default": 16777240, # Qt.Key_F9 (0x01000038)
+        "default": 16777272, # Qt.Key_F9 (0x01000038)
         "type": "int",
         "tier": "basic",
         "section": SECTION_GENERAL,

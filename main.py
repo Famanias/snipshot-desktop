@@ -25,7 +25,10 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QStackedWidget, QSystemTrayIcon, QMenu, QAction,
     QWidget, QHBoxLayout, QFrame, QLabel, QPushButton, QShortcut
 )
-from PyQt5.QtCore import Qt, QTimer, QPoint, pyqtSignal, QThread, QBuffer, QIODevice
+from PyQt5.QtCore import (
+    Qt, QTimer, QPoint, pyqtSignal, QThread, QBuffer, QIODevice,
+    QAbstractNativeEventFilter, QAbstractEventDispatcher,
+)
 from PyQt5.QtGui import QIcon, QPixmap, QKeySequence
 
 # Setup crash logging
@@ -97,6 +100,18 @@ _QT_TO_VK = {
     0x01000015: 0x28,  # Key_Down
     0x01000006: 0x2D,  # Key_Insert
     0x01000007: 0x2E,  # Key_Delete
+    # Punctuation/Symbols
+    0x3b: 0xBA,        # Key_Semicolon → VK_OEM_1
+    0x3d: 0xBB,        # Key_Equal → VK_OEM_PLUS
+    0x2c: 0xBC,        # Key_Comma → VK_OEM_COMMA
+    0x2d: 0xBD,        # Key_Minus → VK_OEM_MINUS
+    0x2e: 0xBE,        # Key_Period → VK_OEM_PERIOD
+    0x2f: 0xBF,        # Key_Slash → VK_OEM_2
+    0x60: 0xC0,        # Key_QuoteLeft → VK_OEM_3
+    0x5b: 0xDB,        # Key_BracketLeft → VK_OEM_4
+    0x5c: 0xDC,        # Key_Backslash → VK_OEM_5
+    0x5d: 0xDD,        # Key_BracketRight → VK_OEM_6
+    0x27: 0xDE,        # Key_Apostrophe → VK_OEM_7
 }
 
 
@@ -104,8 +119,8 @@ def _qt_key_to_vk(qt_key: int):
     """Return the Windows Virtual Key code for a Qt key, or None if not mappable."""
     if qt_key in _QT_TO_VK:
         return _QT_TO_VK[qt_key]
-    # Printable ASCII: Qt code == Windows VK code
-    if 0x20 <= qt_key <= 0x7E:
+    # Letters (A-Z) and Numbers (0-9) map 1-to-1 to Windows Virtual Key codes
+    if (0x30 <= qt_key <= 0x39) or (0x41 <= qt_key <= 0x5A):
         return qt_key
     return None
 
@@ -299,6 +314,23 @@ class QueuedTranslationWorker(QThread):
             self.error.emit(str(e))
 
 
+class WinEventFilter(QAbstractNativeEventFilter):
+    """Native event filter to capture global hotkeys even when window is hidden/minimized."""
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+
+    def nativeEventFilter(self, eventType, message):
+        if eventType == b"windows_generic_MSG":
+            msg = ctypes.cast(
+                int(message),
+                ctypes.POINTER(ctypes.wintypes.MSG)
+            ).contents
+            if msg.message == 0x0312:  # WM_HOTKEY
+                self.callback(msg.wParam)
+        return False, 0
+
+
 class MainWindow(QMainWindow):
     """
     Main application window.
@@ -349,8 +381,15 @@ class MainWindow(QMainWindow):
 
         self._snip_local_shortcut = None
         self._continuous_local_shortcut = None
-        self._install_snip_shortcut(DEFAULT_SHORTCUT_KEY)
-        self._install_continuous_snip_shortcut(DEFAULT_CONTINUOUS_SHORTCUT_KEY)
+        
+        # Install native event filter for global hotkeys
+        self._event_filter = WinEventFilter(self._handle_global_hotkey)
+        QAbstractEventDispatcher.instance().installNativeEventFilter(self._event_filter)
+
+        snip_key = settings_manager.get_setting("snip_shortcut_key", DEFAULT_SHORTCUT_KEY)
+        continuous_key = settings_manager.get_setting("continuous_shortcut_key", DEFAULT_CONTINUOUS_SHORTCUT_KEY)
+        self._install_snip_shortcut(snip_key)
+        self._install_continuous_snip_shortcut(continuous_key)
     
     def _create_screens(self):
         """Create all application screens"""
@@ -484,17 +523,33 @@ class MainWindow(QMainWindow):
             self._snip_local_shortcut = None
 
         self._snip_local_shortcut = QShortcut(QKeySequence(key), self)
-        self._snip_local_shortcut.setContext(Qt.WindowShortcut)
+        self._snip_local_shortcut.setContext(Qt.ApplicationShortcut)
         self._snip_local_shortcut.activated.connect(lambda: self._start_capture(continuous=False))
 
-        vk = _qt_key_to_vk(key)
+        # Extract modifiers and plain key code
+        qt_mods = key & 0x1E000000
+        plain_key = key & ~0x1E000000
+
+        vk = _qt_key_to_vk(plain_key)
         if vk is None:
             return  # Key not mappable to a Win32 Virtual Key
 
+        # Map to Win32 modifiers
+        # MOD_ALT = 0x0001, MOD_CONTROL = 0x0002, MOD_SHIFT = 0x0004, MOD_WIN = 0x0008, MOD_NOREPEAT = 0x4000
+        win_mods = _MOD_NOREPEAT
+        if qt_mods & 0x02000000:  # Qt.ControlModifier
+            win_mods |= 0x0002
+        if qt_mods & 0x04000000:  # Qt.ShiftModifier
+            win_mods |= 0x0004
+        if qt_mods & 0x08000000:  # Qt.AltModifier
+            win_mods |= 0x0001
+        if qt_mods & 0x10000000:  # Qt.MetaModifier
+            win_mods |= 0x0008
+
         # Try first with MOD_NOREPEAT (Win8+), fall back without it
-        success = user32.RegisterHotKey(hwnd, _SNIP_HOTKEY_ID, _MOD_NOREPEAT, vk)
+        success = user32.RegisterHotKey(hwnd, _SNIP_HOTKEY_ID, win_mods, vk)
         if not success:
-            success = user32.RegisterHotKey(hwnd, _SNIP_HOTKEY_ID, 0, vk)
+            success = user32.RegisterHotKey(hwnd, _SNIP_HOTKEY_ID, win_mods & ~_MOD_NOREPEAT, vk)
 
         if success:
             self._current_hotkey_vk = vk
@@ -520,35 +575,50 @@ class MainWindow(QMainWindow):
             self._continuous_local_shortcut = None
 
         self._continuous_local_shortcut = QShortcut(QKeySequence(key), self)
-        self._continuous_local_shortcut.setContext(Qt.WindowShortcut)
+        self._continuous_local_shortcut.setContext(Qt.ApplicationShortcut)
         self._continuous_local_shortcut.activated.connect(lambda: self._start_capture(continuous=True))
 
-        vk = _qt_key_to_vk(key)
+        # Extract modifiers and plain key code
+        qt_mods = key & 0x1E000000
+        plain_key = key & ~0x1E000000
+
+        vk = _qt_key_to_vk(plain_key)
         if vk is None:
             return
 
-        success = user32.RegisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID, _MOD_NOREPEAT, vk)
+        # Map to Win32 modifiers
+        win_mods = _MOD_NOREPEAT
+        if qt_mods & 0x02000000:  # Qt.ControlModifier
+            win_mods |= 0x0002
+        if qt_mods & 0x04000000:  # Qt.ShiftModifier
+            win_mods |= 0x0004
+        if qt_mods & 0x08000000:  # Qt.AltModifier
+            win_mods |= 0x0001
+        if qt_mods & 0x10000000:  # Qt.MetaModifier
+            win_mods |= 0x0008
+
+        success = user32.RegisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID, win_mods, vk)
         if not success:
-            success = user32.RegisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID, 0, vk)
+            success = user32.RegisterHotKey(hwnd, _CONTINUOUS_HOTKEY_ID, win_mods & ~_MOD_NOREPEAT, vk)
 
         if success:
             self._current_continuous_hotkey_vk = vk
 
-    def nativeEvent(self, eventType, message):
-        """Intercept WM_HOTKEY to trigger the snip shortcuts globally."""
-        if eventType == b"windows_generic_MSG":
-            msg = ctypes.cast(
-                int(message),
-                ctypes.POINTER(ctypes.wintypes.MSG)
-            ).contents
-            if msg.message == _WM_HOTKEY:
-                if msg.wParam == _SNIP_HOTKEY_ID:
-                    self._start_capture(continuous=False)
-                    return True, 0
-                elif msg.wParam == _CONTINUOUS_HOTKEY_ID:
-                    self._start_capture(continuous=True)
-                    return True, 0
-        return super().nativeEvent(eventType, message)
+    def _handle_global_hotkey(self, hotkey_id: int):
+        """Handle global WM_HOTKEY events intercepted by the native event filter."""
+        if hotkey_id == _SNIP_HOTKEY_ID:
+            self._start_capture(continuous=False)
+        elif hotkey_id == _CONTINUOUS_HOTKEY_ID:
+            self._start_capture(continuous=True)
+
+    def showEvent(self, event):
+        """Re-register hotkeys on show to ensure they bind to the correct winId."""
+        super().showEvent(event)
+        from utils.settings_manager import settings_manager
+        snip_key = settings_manager.get_setting("snip_shortcut_key", DEFAULT_SHORTCUT_KEY)
+        continuous_key = settings_manager.get_setting("continuous_shortcut_key", DEFAULT_CONTINUOUS_SHORTCUT_KEY)
+        self._install_snip_shortcut(snip_key)
+        self._install_continuous_snip_shortcut(continuous_key)
 
     def closeEvent(self, event):
         """Unregister hotkeys and close HUD when the window closes."""

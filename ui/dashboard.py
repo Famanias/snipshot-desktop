@@ -1193,7 +1193,11 @@ class _ShortcutButton(QPushButton):
         self.style().polish(self)
         self.setText("Change\u2026")
         self.clearFocus()
-        self.shortcut_captured.emit(key)
+        
+        # Combine key code with modifiers (Ctrl, Shift, Alt, Meta)
+        modifiers = int(event.modifiers()) & 0x1E000000
+        full_key = key | modifiers
+        self.shortcut_captured.emit(full_key)
 
     def focusOutEvent(self, event):
         if self._waiting:
@@ -1782,6 +1786,7 @@ class SettingControlWrapper:
         self.shortcut_display = None
         self.shortcut_btn = None
         self.badge = None
+        self.shortcut_value = None
 
     def block_signals(self, block: bool):
         for widget in [self.slider, self.spinbox, self.checkbox, self.combo] + self.radio_buttons:
@@ -1830,12 +1835,15 @@ class SettingControlWrapper:
                 
         # Update shortcut key representation if applicable
         if self.shortcut_display and isinstance(value, int) and not isinstance(value, bool):
+            self.shortcut_value = value
             self.shortcut_display.setText(QKeySequence(value).toString())
                 
         self.block_signals(False)
 
     def get_ui_value(self) -> Any:
         """Read live value from the UI inputs."""
+        if self.shortcut_btn:
+            return self.shortcut_value
         if self.checkbox:
             if self.spinbox:
                 if not self.checkbox.isChecked():
@@ -3840,8 +3848,9 @@ class DashboardWindow(QWidget):
             
             btn = _ShortcutButton("Change Shortcut")
             
-            def on_shortcut_captured(new_key, k=key, disp=display):
+            def on_shortcut_captured(new_key, k=key, disp=display, w=wrapper):
                 disp.setText(self._key_name(new_key))
+                w.shortcut_value = new_key
                 self.settings_manager.set_setting(k, new_key)
                 self._on_control_modified(k)
                 if k == "snip_shortcut_key":
@@ -4065,6 +4074,10 @@ class DashboardWindow(QWidget):
 
         for key in list(self._setting_widgets.keys()):
             self._refresh_setting_control(key)
+
+    def _set_continuous_mode(self, enabled: bool):
+        self.continuous_mode_enabled = enabled
+        self.continuous_mode_changed.emit(enabled)
 
     # ── Settings Properties (single source of truth in settings_manager) ──
     @property

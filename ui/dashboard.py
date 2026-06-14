@@ -1514,7 +1514,8 @@ class DesktopNotification:
         parent._current_toast = toast
 
         if not parent.isActiveWindow():
-            self._notify_desktop()
+            if parent.settings_manager.get_setting("notifications_enabled"):
+                self._notify_desktop()
 
     def _notify_desktop(self):
         prefix = {"success": "✅ ", "error": "❌ ", "info": "ℹ️ "}.get(self._type, "")
@@ -1823,6 +1824,7 @@ class SettingControlWrapper:
         self.shortcut_btn = None
         self.badge = None
         self.shortcut_value = None
+        self.custom_refresh = None
 
     def block_signals(self, block: bool):
         for widget in [self.slider, self.spinbox, self.checkbox, self.combo] + self.radio_buttons:
@@ -1831,6 +1833,8 @@ class SettingControlWrapper:
 
     def set_value(self, value: Any):
         self.block_signals(True)
+        if self.custom_refresh:
+            self.custom_refresh(value)
         
         # Handle checkbox values
         if self.checkbox:
@@ -3862,6 +3866,51 @@ class DashboardWindow(QWidget):
             wrapper.combo.addItem("dark", "dark")
             wrapper.combo.setCurrentIndex(wrapper.combo.findData(current_val))
             
+            wrapper.custom_refresh = set_theme_ui
+            
+            layout.addLayout(lbl_layout)
+
+        elif control_type == "segmented_pill":
+            pill_widget = QWidget()
+            pill_layout = QHBoxLayout(pill_widget)
+            pill_layout.setContentsMargins(0, 0, 0, 0)
+            pill_layout.setSpacing(SPACE["xs"])
+            
+            on_btn = QPushButton("On")
+            on_btn.setCursor(Qt.PointingHandCursor)
+            
+            off_btn = QPushButton("Off")
+            off_btn.setCursor(Qt.PointingHandCursor)
+            
+            def set_pill_ui(val):
+                is_on = bool(val)
+                on_btn.setStyleSheet(self._theme_pill_style(is_on))
+                off_btn.setStyleSheet(self._theme_pill_style(not is_on))
+                
+            set_pill_ui(current_val)
+            
+            def on_pill_click(val):
+                set_pill_ui(val)
+                if wrapper.combo:
+                    idx = wrapper.combo.findData(val)
+                    if idx >= 0:
+                        wrapper.combo.setCurrentIndex(idx)
+                self._on_control_modified(key)
+                
+            on_btn.clicked.connect(lambda: on_pill_click(True))
+            off_btn.clicked.connect(lambda: on_pill_click(False))
+            
+            pill_layout.addWidget(on_btn)
+            pill_layout.addWidget(off_btn)
+            lbl_layout.addWidget(pill_widget)
+            
+            wrapper.combo = QComboBox()
+            wrapper.combo.addItem("On", True)
+            wrapper.combo.addItem("Off", False)
+            wrapper.combo.setCurrentIndex(wrapper.combo.findData(bool(current_val)))
+            
+            wrapper.custom_refresh = set_pill_ui
+            
             layout.addLayout(lbl_layout)
             
         elif control_type == "shortcut_key":
@@ -4147,6 +4196,14 @@ class DashboardWindow(QWidget):
     @continuous_snip_interval.setter
     def continuous_snip_interval(self, value):
         self.settings_manager.set_setting("continuous_snip_interval", value)
+
+    @property
+    def notifications_enabled(self):
+        return self.settings_manager.get_setting("notifications_enabled")
+
+    @notifications_enabled.setter
+    def notifications_enabled(self, value):
+        self.settings_manager.set_setting("notifications_enabled", value)
 
     @property
     def detection_size(self):
@@ -5301,6 +5358,9 @@ class DashboardWindow(QWidget):
             return
             
         widget = self._queue_widgets[item_id]
+        if widget.status in ("completed", "failed", "cancelled"):
+            return
+            
         widget.update_status(status, progress, error_msg)
         
         # Update badge count

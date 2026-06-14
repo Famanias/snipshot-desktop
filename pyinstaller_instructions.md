@@ -57,6 +57,7 @@ pyinstaller `
     --hidden-import anyio `
     --hidden-import sniffio `
     --hidden-import certifi `
+    --hidden-import plyer `
     --hidden-import platformdirs `
     --hidden-import cryptography `
     --hidden-import local_api `

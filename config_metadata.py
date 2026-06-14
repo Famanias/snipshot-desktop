@@ -100,6 +100,20 @@ SETTINGS_METADATA = {
             "tooltip": "Time to wait (in milliseconds) before starting the next capture"
         }
     },
+    "notifications_enabled": {
+        "default": True,
+        "type": "bool",
+        "tier": "basic",
+        "section": SECTION_GENERAL,
+        "validation": {
+            "constraint": "boolean"
+        },
+        "ui": {
+            "label": "Enable Desktop Notifications",
+            "control": "segmented_pill",
+            "tooltip": "Receive OS-level desktop notifications when translations finish"
+        }
+    },
     "inpainter": {
         "default": "lama_large",
         "type": "string",

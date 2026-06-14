@@ -29,6 +29,10 @@ Main dashboard with folder/image management (Google Drive-style).
 
 import os
 import json
+import threading
+# pyrefly: ignore [missing-import]
+from plyer import notification as plyer_notify
+
 
 SUPPORTED_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp')
 
@@ -1492,6 +1496,38 @@ class SectionHeader(QWidget):
         self._apply_style()
         self.toggled.emit(self.is_expanded)
 
+class DesktopNotification:
+    def __init__(self, parent, message: str, type: str = "info", title: str = "SnipShot"):
+        self._parent = parent
+        self._message = message
+        self._type = type
+        self._title = title
+
+        if hasattr(parent, "_current_toast") and parent._current_toast:
+            try:
+                parent._current_toast.deleteLater()
+            except (RuntimeError, TypeError):
+                pass
+
+        toast = ToastNotification(parent, message, type)
+        toast.show()
+        parent._current_toast = toast
+
+        if not parent.isActiveWindow():
+            self._notify_desktop()
+
+    def _notify_desktop(self):
+        prefix = {"success": "✅ ", "error": "❌ ", "info": "ℹ️ "}.get(self._type, "")
+        threading.Thread(
+            target=plyer_notify.notify,
+            kwargs=dict(
+                title=f"{prefix}{self._title}",
+                message=self._message,
+                app_name="SnipShot",
+                timeout=4,
+            ),
+            daemon=True,
+        ).start()
 
 class ToastNotification(QWidget):
     def __init__(self, parent, message, type="info"):
@@ -5248,14 +5284,16 @@ class DashboardWindow(QWidget):
         # Update badge count
         self._update_queue_badge()
 
+    # def show_toast(self, message: str, type: str = "info"):
+    #     if hasattr(self, "_current_toast") and self._current_toast:
+    #         try:
+    #             self._current_toast.deleteLater()
+    #         except (RuntimeError, TypeError):
+    #             pass
+    #     self._current_toast = ToastNotification(self, message, type)
+    #     self._current_toast.show()
     def show_toast(self, message: str, type: str = "info"):
-        if hasattr(self, "_current_toast") and self._current_toast:
-            try:
-                self._current_toast.deleteLater()
-            except (RuntimeError, TypeError):
-                pass
-        self._current_toast = ToastNotification(self, message, type)
-        self._current_toast.show()
+        DesktopNotification(self, message, type)
 
     def update_queue_item_ui(self, item_id: str, status: str, progress: int = 0, error_msg: str = ""):
         """Update the status of an existing item in the queue drawer."""
